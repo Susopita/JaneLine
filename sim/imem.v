@@ -9,8 +9,8 @@ module imem(input  [31:0] a,
           $display("Loading instruction memory from: %0s", mem_file);
           $readmemh(mem_file, RAM);
       end else begin
-          $display("Loading default instruction memory (riscvtest.txt)");
-          $readmemh("riscvtest.txt", RAM);
+          $display("Loading default instruction memory (tests/riscvtest.mem)");
+          $readmemh("tests/riscvtest.mem", RAM);
       end
   end
 
