@@ -1,0 +1,6 @@
+// Programa (1): ISA sin dependencias
+// Escribe aquí tus instrucciones en hexadecimal, una por línea.
+// Ejemplo:
+// 00400113  // addi x2, x0, 4
+// 01900193  // addi x3, x0, 25
+// 06312223  // sw x3, 100(x2)
