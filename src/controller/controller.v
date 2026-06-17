@@ -1,11 +1,14 @@
 // =============================================================================
 // controller.v  –  Unidad de Control Pipelined RISC-V 32-bit
-// Paso 1: agrega el sufijo de etapa a todas las señales.
-//         - Etapa ID : decodificación combinacional (maindec + aludec)
-//         - Registro ID/EX : propaga señales de control hacia EX
-//         - Registro EX/MEM: propaga señales hacia MEM
-//         - Registro MEM/WB: propaga señales hacia WB
-// Sin hazard unit todavía (se agrega en pasos posteriores).
+// Fase B: ISA completo.
+//   Cambios respecto a Fase A:
+//     - ImmSrc ampliado a 3 bits (U-type para LUI)
+//     - Nuevas señales de control: JalrE (jalr), ShiftArithE (sra/srai)
+//     - PCSrcE ahora resuelve beq, bne, blt, bge usando Funct3E y los flags
+//       Zero y Neg de la ALU
+//     - Funct3D se registra en el registro ID/EX para usarse en EX
+//     - ResultSrc de 2 bits soporta LUI (ResultSrc=11 → pasa ImmExt directo)
+// Sin Hazard Unit todavía.
 // =============================================================================
 module controller(
     input  clk, reset,
@@ -14,18 +17,16 @@ module controller(
     // Entradas desde la etapa ID (campos de la instrucción decodificada)
     // -------------------------------------------------------------------------
     input  [6:0] OpD,
-    input  [2:0] funct3D,
-    input        funct7b5D,
+    input  [2:0] Funct3D,
+    input        Funct7b5D,
 
     // -------------------------------------------------------------------------
     // Salida combinacional hacia el datapath (etapa ID)
-    // ImmSrc no pasa por un registro: el extensor de inmediatos necesita
-    // el tipo de inmediato en la misma etapa ID, de forma combinacional.
     // -------------------------------------------------------------------------
-    output [1:0] ImmSrc,
+    output [2:0] ImmSrc,     // AMPLIADO a 3 bits
 
     // -------------------------------------------------------------------------
-    // Señales de control para la etapa EX (después del registro ID/EX)
+    // Señales de control para la etapa EX (post-registro ID/EX)
     // -------------------------------------------------------------------------
     output       ALUSrcE,
     output [2:0] ALUControlE,
@@ -34,37 +35,41 @@ module controller(
     output       RegWriteE,
     output       JumpE,
     output       BranchE,
+    output       JalrE,        // NUEVO: 1 = jalr (PC target = Rs1+Imm)
+    output       ShiftArithE,  // NUEVO: 1 = corrimiento aritmético (sra/srai)
 
     // -------------------------------------------------------------------------
-    // Señales de control para la etapa MEM (después del registro EX/MEM)
+    // Señales de control para la etapa MEM (post-registro EX/MEM)
     // -------------------------------------------------------------------------
     output       MemWriteM,
     output       RegWriteM,
     output [1:0] ResultSrcM,
 
     // -------------------------------------------------------------------------
-    // Señales de control para la etapa WB (después del registro MEM/WB)
+    // Señales de control para la etapa WB (post-registro MEM/WB)
     // -------------------------------------------------------------------------
     output       RegWriteW,
     output [1:0] ResultSrcW,
 
     // -------------------------------------------------------------------------
-    // Señal Zero desde la ALU (etapa EX) para resolver branches
+    // Flags de la ALU (etapa EX) para resolver branches
     // -------------------------------------------------------------------------
-    input        ZeroE,
-    output       PCSrcE
+    input        ZeroE,    // result == 0  (beq, bne)
+    input        NegE,     // result[31]   (blt, bge)
+    output       PCSrcE    // 1 → tomar salto
 );
 
   // ---------------------------------------------------------------------------
   // Etapa ID – Decodificación combinacional
   // ---------------------------------------------------------------------------
+  wire [2:0] ImmSrcD;
   wire [1:0] ALUOpD;
-  wire       BranchD, JumpD, ALUSrcD, MemWriteD, RegWriteD;
+  wire       BranchD, JumpD, JalrSrcD, ALUSrcD, MemWriteD, RegWriteD;
   wire [1:0] ResultSrcD;
   wire [2:0] ALUControlD;
-  wire [1:0] ImmSrcD;   // wire local para ImmSrc (etapa ID)
+  wire       ShiftArithD;
 
-  // Decodificador principal: genera señales de control a partir del opcode
+  // Decodificador principal
   maindec md(
     .op        (OpD),
     .ResultSrc (ResultSrcD),
@@ -73,29 +78,34 @@ module controller(
     .ALUSrc    (ALUSrcD),
     .RegWrite  (RegWriteD),
     .Jump      (JumpD),
+    .JalrSrc   (JalrSrcD),   // NUEVO
     .ImmSrc    (ImmSrcD),
     .ALUOp     (ALUOpD)
   );
 
-  // Decodificador ALU: genera ALUControl a partir de funct3/funct7 y ALUOp
+  // Decodificador ALU
   aludec ad(
-    .opb5      (OpD[5]),
-    .funct3    (funct3D),
-    .funct7b5  (funct7b5D),
-    .ALUOp     (ALUOpD),
-    .ALUControl(ALUControlD)
+    .opb5       (OpD[5]),
+    .funct3     (Funct3D),
+    .funct7b5   (Funct7b5D),
+    .ALUOp      (ALUOpD),
+    .ALUControl (ALUControlD),
+    .ShiftArith (ShiftArithD)  // NUEVO
   );
 
-  // ImmSrc se pasa directamente al datapath (combinacional, no se registra)
+  // ImmSrc es combinacional (etapa ID, no se registra para llegar al extensor)
   assign ImmSrc = ImmSrcD;
 
   // ---------------------------------------------------------------------------
   // Registro ID / EX
-  // Propaga todas las señales de control que necesitan las etapas EX, MEM y WB
+  // Propaga todas las señales de control hacia la etapa EX.
+  // Incluye Funct3 para resolver el tipo de branch en EX.
   // ---------------------------------------------------------------------------
   reg        ALUSrcE_r, MemWriteE_r, RegWriteE_r, JumpE_r, BranchE_r;
+  reg        JalrE_r, ShiftArithE_r;  // NUEVO
   reg [1:0]  ResultSrcE_r;
   reg [2:0]  ALUControlE_r;
+  reg [2:0]  Funct3E_r;               // NUEVO: para resolver beq/bne/blt/bge en EX
 
   always @(posedge clk or posedge reset) begin
     if (reset) begin
@@ -104,16 +114,22 @@ module controller(
       RegWriteE_r   <= 1'b0;
       JumpE_r       <= 1'b0;
       BranchE_r     <= 1'b0;
+      JalrE_r       <= 1'b0;    // NUEVO
+      ShiftArithE_r <= 1'b0;    // NUEVO
       ResultSrcE_r  <= 2'b0;
       ALUControlE_r <= 3'b0;
+      Funct3E_r     <= 3'b0;    // NUEVO
     end else begin
       ALUSrcE_r     <= ALUSrcD;
       MemWriteE_r   <= MemWriteD;
       RegWriteE_r   <= RegWriteD;
       JumpE_r       <= JumpD;
       BranchE_r     <= BranchD;
+      JalrE_r       <= JalrSrcD;   // NUEVO
+      ShiftArithE_r <= ShiftArithD; // NUEVO
       ResultSrcE_r  <= ResultSrcD;
       ALUControlE_r <= ALUControlD;
+      Funct3E_r     <= Funct3D;    // NUEVO: captura funct3 para branches en EX
     end
   end
 
@@ -122,15 +138,36 @@ module controller(
   assign RegWriteE  = RegWriteE_r;
   assign JumpE      = JumpE_r;
   assign BranchE    = BranchE_r;
+  assign JalrE      = JalrE_r;
+  assign ShiftArithE = ShiftArithE_r;
   assign ResultSrcE = ResultSrcE_r;
   assign ALUControlE = ALUControlE_r;
 
-  // Resolución de branch/jump (combinacional en EX)
-  assign PCSrcE = (BranchE & ZeroE) | JumpE;
+  // ---------------------------------------------------------------------------
+  // Resolución de branch en la etapa EX
+  //
+  // La ALU realiza Rs1E - Rs2E (SUB) para todas las instrucciones B-type.
+  // El funct3 determina la condición:
+  //   000 (beq) : toma si resultado == 0        → ZeroE
+  //   001 (bne) : toma si resultado != 0        → ~ZeroE
+  //   100 (blt) : toma si resultado  < 0 (signed) → NegE
+  //   101 (bge) : toma si resultado >= 0 (signed) → ~NegE
+  //
+  // Jump incondicional: jal siempre toma; jalr también (JumpE=1).
+  // ---------------------------------------------------------------------------
+  wire BranchTakenE;
+  assign BranchTakenE =
+      BranchE & (
+        (Funct3E_r == 3'b000 &  ZeroE) |   // beq
+        (Funct3E_r == 3'b001 & ~ZeroE) |   // bne
+        (Funct3E_r == 3'b100 &  NegE)  |   // blt  (signed)
+        (Funct3E_r == 3'b101 & ~NegE)      // bge  (signed)
+      );
+
+  assign PCSrcE = BranchTakenE | JumpE;
 
   // ---------------------------------------------------------------------------
   // Registro EX / MEM
-  // Propaga las señales de control que necesitan las etapas MEM y WB
   // ---------------------------------------------------------------------------
   reg        MemWriteM_r, RegWriteM_r;
   reg [1:0]  ResultSrcM_r;
@@ -153,7 +190,6 @@ module controller(
 
   // ---------------------------------------------------------------------------
   // Registro MEM / WB
-  // Propaga las señales de control que necesita la etapa WB
   // ---------------------------------------------------------------------------
   reg        RegWriteW_r;
   reg [1:0]  ResultSrcW_r;
