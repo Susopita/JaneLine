@@ -57,6 +57,16 @@ module riscvsingle(
   wire [1:0] ResultSrcW;
 
   // ---------------------------------------------------------------------------
+  // Paso 2: Wires de hazard (conectados al datapath, usados en Paso 5)
+  // Estos buses de números de registro serán la entrada del Hazard Unit.
+  // ---------------------------------------------------------------------------
+  wire [4:0] Rs1D_w, Rs2D_w;   // Rs1/Rs2 en etapa ID
+  wire [4:0] Rs1E_w, Rs2E_w;   // Rs1/Rs2 en etapa EX
+  wire [4:0] RdE_w;             // Rd en EX
+  wire [4:0] RdM_w;             // Rd en MEM
+  wire [4:0] RdW_w;             // Rd en WB (también conectado al regfile via datapath)
+
+  // ---------------------------------------------------------------------------
   // Instancia del Controller (unidad de control pipelined)
   // ---------------------------------------------------------------------------
   controller c(
@@ -121,7 +131,15 @@ module riscvsingle(
     .ALUResultM    (DataAdr),
     .WriteDataM    (WriteData),
     .MemWriteM_out (MemWrite),
-    .ReadDataM     (ReadData)
+    .ReadDataM     (ReadData),
+    // Paso 2: Outputs de hazard → se enrutarán al Hazard Unit en Paso 5
+    .Rs1D          (Rs1D_w),
+    .Rs2D          (Rs2D_w),
+    .Rs1E          (Rs1E_w),
+    .Rs2E          (Rs2E_w),
+    .RdE           (RdE_w),
+    .RdM           (RdM_w),
+    .RdW           (RdW_w)
   );
 
 endmodule
