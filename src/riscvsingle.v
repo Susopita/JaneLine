@@ -38,6 +38,8 @@ module riscvsingle(
   wire       ALUSrcE;
   wire [2:0] ALUControlE;
   wire [1:0] ResultSrcE;
+  wire       MemWriteE;       // necesario para hazard unit (Paso 5)
+  wire       RegWriteE;       // necesario para hazard unit (Paso 5)
   wire       JumpE;
   wire       BranchE;
 
@@ -82,8 +84,8 @@ module riscvsingle(
     .ALUSrcE     (ALUSrcE),
     .ALUControlE (ALUControlE),
     .ResultSrcE  (ResultSrcE),
-    .MemWriteE   (),           // usada internamente en el controller
-    .RegWriteE   (),           // usada internamente en el controller
+    .MemWriteE   (MemWriteE),           // usada internamente en el controller
+    .RegWriteE   (RegWriteE),           // usada internamente en el controller
     .JumpE       (JumpE),
     .BranchE     (BranchE),
     // Señales de control para MEM (post-registro EX/MEM)
