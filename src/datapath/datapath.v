@@ -1,6 +1,9 @@
 // =============================================================================
 // datapath.v  –  RISC-V 32-bit  Pipelined Datapath
-// Paso 1: Registro IF/ID introducido (sin hazards).
+// Paso 1: Registro IF/ID introducido.
+// Paso 2: Registro ID/EX ahora propaga Rs1E y Rs2E (números de registro
+//         fuente). Se exponen outputs de hazard (Rs1D, Rs2D, Rs1E, Rs2E,
+//         RdE, RdM, RdW) para que el Hazard Unit los use en pasos futuros.
 //
 // División de responsabilidades con el controller:
 //   - Este módulo genera ZeroE (flag de la ALU) y lo exporta al controller.
@@ -61,7 +64,20 @@ module datapath(
     output [31:0] ALUResultM,     // dirección de memoria
     output [31:0] WriteDataM,     // dato a escribir en memoria
     output        MemWriteM_out,  // write-enable hacia dmem
-    input  [31:0] ReadDataM       // dato leído de dmem
+    input  [31:0] ReadDataM,      // dato leído de dmem
+
+    // -------------------------------------------------------------------------
+    // Paso 2: Outputs para la Hazard Unit (se conectarán en el Paso 5)
+    // El Hazard Unit necesita estos números de registro para:
+    //   - Detectar dependencias RAW y decidir forwarding / stall / flush.
+    // -------------------------------------------------------------------------
+    output [4:0] Rs1D,   // Rs1 en etapa ID (para stall detection: Load-Use)
+    output [4:0] Rs2D,   // Rs2 en etapa ID (para stall detection: Load-Use)
+    output [4:0] Rs1E,   // Rs1 en etapa EX (para forwarding desde MEM o WB)
+    output [4:0] Rs2E,   // Rs2 en etapa EX (para forwarding desde MEM o WB)
+    output [4:0] RdE,    // Rd  en etapa EX (para detectar write-back pendiente)
+    output [4:0] RdM,    // Rd  en etapa MEM (para forwarding EX/MEM → EX)
+    output [4:0] RdW     // Rd  en etapa WB  (para forwarding MEM/WB → EX)
 );
 
   localparam WIDTH = 32;
@@ -166,30 +182,57 @@ module datapath(
   );
 
   // ===========================================================================
-  // REGISTRO INTERMEDIO  ID / EX
-  // Propaga operandos y registro destino hacia la etapa EX.
-  // Las señales de control viajan en un registro análogo dentro del controller.
+  // REGISTRO INTERMEDIO  ID / EX  (Paso 2)
+  //
+  // Propaga hacia la etapa EX:
+  //   Datos  : RD1, RD2, ImmExt, PC, PCPlus4
+  //   Hazard : Rs1E, Rs2E (números de registro fuente)  ← NUEVO en Paso 2
+  //            RdE  (número de registro destino)
+  //
+  // Las señales de CONTROL correspondientes viajan en el registro ID/EX
+  // que está dentro del controller.v (ALUSrcE, ALUControlE, etc.).
   // ===========================================================================
-  reg [31:0] RD1E, RD2E, ImmExtE, PCE, PCPlus4E;
-  reg [4:0]  RdE;
+  reg [31:0] RD1E_r, RD2E_r, ImmExtE_r, PCE_r, PCPlus4E_r;
+  reg [4:0]  RdE_r;   // registro destino
+  reg [4:0]  Rs1E_r;  // NUEVO: registro fuente 1 (para forwarding/stall)
+  reg [4:0]  Rs2E_r;  // NUEVO: registro fuente 2 (para forwarding/stall)
 
   always @(posedge clk or posedge reset) begin
     if (reset) begin
-      RD1E     <= 32'b0;
-      RD2E     <= 32'b0;
-      ImmExtE  <= 32'b0;
-      PCE      <= 32'b0;
-      PCPlus4E <= 32'b0;
-      RdE      <= 5'b0;
+      RD1E_r    <= 32'b0;
+      RD2E_r    <= 32'b0;
+      ImmExtE_r <= 32'b0;
+      PCE_r     <= 32'b0;
+      PCPlus4E_r <= 32'b0;
+      RdE_r     <= 5'b0;
+      Rs1E_r    <= 5'b0;   // NUEVO
+      Rs2E_r    <= 5'b0;   // NUEVO
     end else begin
-      RD1E     <= RD1D;
-      RD2E     <= RD2D;
-      ImmExtE  <= ImmExtD;
-      PCE      <= PCD;
-      PCPlus4E <= PCPlus4D;
-      RdE      <= InstrD[11:7];   // Rd (registro destino)
+      RD1E_r    <= RD1D;
+      RD2E_r    <= RD2D;
+      ImmExtE_r <= ImmExtD;
+      PCE_r     <= PCD;
+      PCPlus4E_r <= PCPlus4D;
+      RdE_r     <= InstrD[11:7];    // Rd (bits [11:7] de la instrucción)
+      Rs1E_r    <= InstrD[19:15];   // NUEVO: Rs1 (bits [19:15])
+      Rs2E_r    <= InstrD[24:20];   // NUEVO: Rs2 (bits [24:20])
     end
   end
+
+  // Wires internos de la etapa EX (alias legibles sobre los flip-flops _r)
+  wire [31:0] RD1E, RD2E, ImmExtE, PCE, PCPlus4E;
+  assign RD1E     = RD1E_r;
+  assign RD2E     = RD2E_r;
+  assign ImmExtE  = ImmExtE_r;
+  assign PCE      = PCE_r;
+  assign PCPlus4E = PCPlus4E_r;
+
+  // Outputs de hazard para el Hazard Unit (Paso 5)
+  assign Rs1D = InstrD[19:15];  // Rs1 en ID (combinacional desde IF/ID)
+  assign Rs2D = InstrD[24:20];  // Rs2 en ID (combinacional desde IF/ID)
+  assign Rs1E = Rs1E_r;         // Rs1 en EX (viene del registro ID/EX)
+  assign Rs2E = Rs2E_r;         // Rs2 en EX (viene del registro ID/EX)
+  assign RdE  = RdE_r;          // Rd  en EX
 
   // ===========================================================================
   // ETAPA EX – Execute
@@ -246,7 +289,9 @@ module datapath(
   // Puertos de salida hacia la data memory
   assign ALUResultM    = ALUResultM_r;
   assign WriteDataM    = WriteDataM_r;
-  assign MemWriteM_out = MemWriteM;   // pasa directamente desde el controller
+  assign MemWriteM_out = MemWriteM;    // pasa directamente desde el controller
+  // Hazard output: Rd en etapa MEM (para forwarding MEM → EX en Paso 5)
+  assign RdM = RdM_r;
 
   // ===========================================================================
   // ETAPA MEM – Memory Access
@@ -273,7 +318,7 @@ module datapath(
     end
   end
 
-  // Registro destino de WB (alimenta al register file en ID)
+  // Registro destino de WB (alimenta al register file en ID Y al Hazard Unit)
   assign RdW = RdW_r;
 
   // ===========================================================================
