@@ -24,7 +24,8 @@ SRCS = $(SRC_DIR)/riscvsingle.v \
        $(SRC_DIR)/common/adder.v \
        $(SRC_DIR)/common/flopr.v \
        $(SRC_DIR)/common/mux2.v \
-       $(SRC_DIR)/common/mux3.v
+       $(SRC_DIR)/common/mux3.v \
+       $(SRC_DIR)/common/mux4.v
 
 # Archivos de simulación e integración
 SIM_SRCS = $(SIM_DIR)/testbench.v \

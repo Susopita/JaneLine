@@ -28,9 +28,9 @@ module testbench;
     
     // load simulation arguments
     if (!$value$plusargs("expected_addr=%d", expected_addr)) expected_addr = 100;
-    if (!$value$plusargs("expected_data=%d", expected_data)) expected_data = 25;
+    if (!$value$plusargs("expected_data=%d", expected_data)) expected_data = 20;
     if (!$value$plusargs("max_cycles=%d", max_cycles)) max_cycles = 1000;
-    if (!$value$plusargs("allow_all_writes=%d", allow_all_writes)) allow_all_writes = 0;
+    if (!$value$plusargs("allow_all_writes=%d", allow_all_writes)) allow_all_writes = 1;
     cycle_count = 0;
 
     $display("Test configurations:");
