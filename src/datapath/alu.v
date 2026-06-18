@@ -59,7 +59,7 @@ module alu(
     3'b111:  result_reg = ShiftArith                    // SRL/SRA:
                ? ($signed(a) >>> b[4:0])                //   sra/srai (aritmético, extiende signo)
                : (a >> b[4:0]);                         //   srl/srli (lógico, rellena con 0)
-    default: result_reg = 32'bx;
+    default: result_reg = 32'b0;  // ALUControl desconocido: resultado 0 (no X)
   endcase
 
   // -------------------------------------------------------------------------

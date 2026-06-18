@@ -88,7 +88,7 @@ module maindec(
     //   El inmediato U-type ya viene con los 12 bits bajos en cero desde extend.v
     7'b0110111: controls = 13'b1_100_1_0_11_0_11_0_0;
 
-    default:    controls = 13'bx_xxx_x_x_xx_x_xx_x_x; // instrucción no implementada
+    default:    controls = 13'b0_000_0_0_00_0_00_0_0; // NOP: RegWrite=0, no mem, no branch
   endcase
 
 endmodule

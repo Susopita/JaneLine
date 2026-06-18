@@ -36,7 +36,7 @@ module extend(
     //   Los 12 bits bajos se rellenan con ceros (ya en el formato de la instrucción).
     3'b100: immext_reg = {instr[31:12], 12'b0};
 
-    default: immext_reg = 32'bx;
+    default: immext_reg = 32'b0;  // ImmSrc desconocido: salida 0 (no X)
   endcase
 
 endmodule

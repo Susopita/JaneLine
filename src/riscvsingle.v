@@ -1,140 +1,129 @@
 // =============================================================================
 // riscvsingle.v  –  Top-level: Procesador RISC-V 32-bit Pipelined
-// Paso 1: conecta Controller y Datapath.
-//         El registro IF/ID ya está dentro del datapath.
-//
-// Flujo de ZeroE / PCSrcE:
-//   Datapath genera ZeroE (flag de ALU, etapa EX)
-//   Controller recibe ZeroE y calcula PCSrcE = (BranchE & ZeroE) | JumpE
-//   Datapath recibe PCSrcE para seleccionar el siguiente PC
+// Fase B: ISA completo.
+//   - ImmSrc [2:0] (3 bits, cubre U-type para LUI)
+//   - NegE  : flag de signo ALU → controller (para blt/bge)
+//   - JalrE : controller → datapath (selecciona Rs1 como base del salto jalr)
+//   - ShiftArithE : controller → datapath (sra vs srl)
 // =============================================================================
 module riscvsingle(
     input         clk, reset,
 
-    // Interfaz con la Instruction Memory (etapa IF)
-    output [31:0] PC,        // PC actual → dirección de imem
-    input  [31:0] Instr,     // instrucción leída de imem
+    // Instruction Memory (etapa IF)
+    output [31:0] PC,
+    input  [31:0] Instr,
 
-    // Interfaz con la Data Memory (etapa MEM)
-    output        MemWrite,  // write-enable de dmem
-    output [31:0] DataAdr,   // dirección de dmem
-    output [31:0] WriteData, // dato a escribir en dmem
-    input  [31:0] ReadData   // dato leído de dmem
+    // Data Memory (etapa MEM)
+    output        MemWrite,
+    output [31:0] DataAdr,
+    output [31:0] WriteData,
+    input  [31:0] ReadData
 );
 
   // ---------------------------------------------------------------------------
-  // Wires internos entre Controller y Datapath
+  // Wires internos: Controller ↔ Datapath
   // ---------------------------------------------------------------------------
 
-  // Etapa ID: campos de la instrucción decodificada → controller
+  // Etapa ID: campos de instrucción → controller
   wire [6:0] OpD;
   wire [2:0] Funct3D;
   wire       Funct7b5D;
 
-  // Etapa ID: ImmSrc (combinacional controller → datapath)
-  wire [1:0] ImmSrc;
+  // Etapa ID: ImmSrc combinacional (3 bits)
+  wire [2:0] ImmSrc;
 
   // Etapa EX: señales de control controller → datapath
   wire       ALUSrcE;
   wire [2:0] ALUControlE;
   wire [1:0] ResultSrcE;
-  wire       MemWriteE;       // necesario para hazard unit (Paso 5)
-  wire       RegWriteE;       // necesario para hazard unit (Paso 5)
+  wire       MemWriteE;
+  wire       RegWriteE;
   wire       JumpE;
   wire       BranchE;
+  wire       JalrE;        // jalr: target = Rs1 + Imm
+  wire       ShiftArithE;  // sra/srai: corrimiento aritmético
 
-  // Etapa EX: ZeroE datapath → controller (flag de la ALU)
-  wire       ZeroE;
+  // Etapa EX: flags ALU datapath → controller
+  wire       ZeroE;        // result == 0  (beq/bne)
+  wire       NegE;         // result[31]   (blt/bge)
 
-  // Etapa EX: PCSrcE controller → datapath (selección del siguiente PC)
+  // Etapa EX: PCSrcE controller → datapath
   wire       PCSrcE;
 
-  // Etapa MEM: señales de control
+  // Etapa MEM
   wire       MemWriteM;
   wire       RegWriteM;
   wire [1:0] ResultSrcM;
 
-  // Etapa WB: señales de control
+  // Etapa WB
   wire       RegWriteW;
   wire [1:0] ResultSrcW;
 
-  // ---------------------------------------------------------------------------
-  // Paso 2: Wires de hazard (conectados al datapath, usados en Paso 5)
-  // Estos buses de números de registro serán la entrada del Hazard Unit.
-  // ---------------------------------------------------------------------------
-  wire [4:0] Rs1D_w, Rs2D_w;   // Rs1/Rs2 en etapa ID
-  wire [4:0] Rs1E_w, Rs2E_w;   // Rs1/Rs2 en etapa EX
-  wire [4:0] RdE_w;             // Rd en EX
-  wire [4:0] RdM_w;             // Rd en MEM
-  wire [4:0] RdW_w;             // Rd en WB (también conectado al regfile via datapath)
+  // Wires de hazard (datapath → Hazard Unit en Paso siguiente)
+  wire [4:0] Rs1D_w, Rs2D_w;
+  wire [4:0] Rs1E_w, Rs2E_w;
+  wire [4:0] RdE_w, RdM_w, RdW_w;
 
   // ---------------------------------------------------------------------------
-  // Instancia del Controller (unidad de control pipelined)
+  // Controller
   // ---------------------------------------------------------------------------
   controller c(
     .clk         (clk),
     .reset       (reset),
-    // Entradas: campos de instrucción (etapa ID)
     .OpD         (OpD),
-    .funct3D     (Funct3D),
-    .funct7b5D   (Funct7b5D),
-    // Salida combinacional hacia extensor de inmediatos
+    .Funct3D     (Funct3D),
+    .Funct7b5D   (Funct7b5D),
     .ImmSrc      (ImmSrc),
-    // Señales de control para EX (post-registro ID/EX)
     .ALUSrcE     (ALUSrcE),
     .ALUControlE (ALUControlE),
     .ResultSrcE  (ResultSrcE),
-    .MemWriteE   (MemWriteE),           // usada internamente en el controller
-    .RegWriteE   (RegWriteE),           // usada internamente en el controller
+    .MemWriteE   (MemWriteE),
+    .RegWriteE   (RegWriteE),
     .JumpE       (JumpE),
     .BranchE     (BranchE),
-    // Señales de control para MEM (post-registro EX/MEM)
+    .JalrE       (JalrE),
+    .ShiftArithE (ShiftArithE),
     .MemWriteM   (MemWriteM),
     .RegWriteM   (RegWriteM),
     .ResultSrcM  (ResultSrcM),
-    // Señales de control para WB (post-registro MEM/WB)
     .RegWriteW   (RegWriteW),
     .ResultSrcW  (ResultSrcW),
-    // ZeroE del datapath → controller calcula PCSrcE
     .ZeroE       (ZeroE),
+    .NegE        (NegE),
     .PCSrcE      (PCSrcE)
   );
 
   // ---------------------------------------------------------------------------
-  // Instancia del Datapath pipelined
+  // Datapath
   // ---------------------------------------------------------------------------
   datapath dp(
     .clk           (clk),
     .reset         (reset),
-    // Señales de control desde el controller
     .ImmSrc        (ImmSrc),
     .ALUSrcE       (ALUSrcE),
     .ALUControlE   (ALUControlE),
     .ResultSrcE    (ResultSrcE),
     .JumpE         (JumpE),
     .BranchE       (BranchE),
+    .JalrE         (JalrE),
+    .ShiftArithE   (ShiftArithE),
     .MemWriteM     (MemWriteM),
     .RegWriteM     (RegWriteM),
     .ResultSrcM    (ResultSrcM),
     .RegWriteW     (RegWriteW),
     .ResultSrcW    (ResultSrcW),
-    // Instruction Memory (etapa IF)
     .PCF           (PC),
     .InstrF        (Instr),
-    // Campos decodificados → controller (etapa ID)
     .OpD           (OpD),
     .Funct3D       (Funct3D),
     .Funct7b5D     (Funct7b5D),
-    // Flag ALU → controller (etapa EX)
     .ZeroE         (ZeroE),
-    // Selección de PC ← controller (etapa EX)
+    .NegE          (NegE),
     .PCSrcE        (PCSrcE),
-    // Data Memory (etapa MEM)
     .ALUResultM    (DataAdr),
     .WriteDataM    (WriteData),
     .MemWriteM_out (MemWrite),
     .ReadDataM     (ReadData),
-    // Paso 2: Outputs de hazard → se enrutarán al Hazard Unit en Paso 5
     .Rs1D          (Rs1D_w),
     .Rs2D          (Rs2D_w),
     .Rs1E          (Rs1E_w),

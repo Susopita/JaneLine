@@ -70,6 +70,7 @@ module aludec(
       3'b101:  ALUControl_reg = 3'b111;                      // srl/sra, srli/srai
       3'b110:  ALUControl_reg = 3'b011;                      // or, ori
       3'b111:  ALUControl_reg = 3'b010;                      // and, andi
+      default: ALUControl_reg = 3'b000;                      // desconocido: ADD (no X)
     endcase
   endcase
 
