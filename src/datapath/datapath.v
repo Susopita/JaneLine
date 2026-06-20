@@ -86,7 +86,17 @@ module datapath(
     output [4:0] Rs2E,
     output [4:0] RdE,
     output [4:0] RdM,
-    output [4:0] RdW
+    output [4:0] RdW,
+
+    // -------------------------------------------------------------------------
+    // Entradas desde la Hazard Unit
+    // -------------------------------------------------------------------------
+    input        StallF,       // 1 → congela el PC (IF no avanza)
+    input        StallD,       // 1 → congela el registro IF/ID (ID no avanza)
+    input        FlushD,       // 1 → limpia el registro IF/ID (burbuja en ID)
+    input        FlushE,       // 1 → limpia el registro ID/EX (burbuja en EX)
+    input  [1:0] ForwardAE,    // 00=RF 01=WB 10=MEM (forwarding entrada A de ALU)
+    input  [1:0] ForwardBE     // 00=RF 01=WB 10=MEM (forwarding entrada B de ALU)
 );
 
   localparam WIDTH = 32;
@@ -98,12 +108,16 @@ module datapath(
   wire [31:0] PCPlus4F;
   wire [31:0] PCTargetE;  // PC destino (calculado en EX)
 
-  flopr #(WIDTH) pcreg(
-    .clk   (clk),
-    .reset (reset),
-    .d     (PCNextF),
-    .q     (PCF)
-  );
+  // Registro del PC con soporte para Stall:
+  // Si StallF=1 el PC retiene su valor (congela la etapa IF).
+  reg [31:0] PCF_r;
+  assign PCF = PCF_r;
+
+  always @(posedge clk or posedge reset) begin
+    if (reset)        PCF_r <= 32'b0;
+    else if (~StallF) PCF_r <= PCNextF;  // Solo avanza si no hay stall
+    // Si StallF=1: PCF_r retiene su valor sin cambiar
+  end
 
   adder pcadd4(
     .a (PCF),
@@ -127,15 +141,18 @@ module datapath(
   reg [31:0] PCPlus4D;
 
   always @(posedge clk or posedge reset) begin
-    if (reset) begin
+    if (reset || FlushD) begin
+      // Reset normal O flush por salto tomado: inserta burbuja (NOP) en ID
       InstrD   <= 32'b0;
       PCD      <= 32'b0;
       PCPlus4D <= 32'b0;
-    end else begin
+    end else if (~StallD) begin
+      // Solo avanza si no hay stall de Load-Use
       InstrD   <= InstrF;
       PCD      <= PCF;
       PCPlus4D <= PCPlus4F;
     end
+    // Si StallD=1 y no FlushD: registros retienen sus valores (pipeline congelado)
   end
 
   assign OpD       = InstrD[6:0];
@@ -182,7 +199,8 @@ module datapath(
   reg [4:0]  Rs2E_r;
 
   always @(posedge clk or posedge reset) begin
-    if (reset) begin
+    if (reset || FlushE) begin
+      // Reset normal O flush: inserta burbuja (NOP) en EX
       RD1E_r     <= 32'b0;
       RD2E_r     <= 32'b0;
       ImmExtE_r  <= 32'b0;
@@ -241,13 +259,29 @@ module datapath(
   );
 
   // -------------------------------------------------------------------------
+  // Mux de Forwarding para la entrada B de la ALU (Rs2) – ForwardBE
+  //   2'b00 → RD2E      (sin forwarding, valor directo del register file)
+  //   2'b01 → ResultW   (adelanta desde la etapa WB)
+  //   2'b10 → ALUResultM(adelanta desde la etapa MEM)
+  // WriteDataE: es también el dato a guardar en memoria con 'sw' (con forwarding).
+  // -------------------------------------------------------------------------
+  wire [31:0] WriteDataE;
+  mux3 #(WIDTH) forwardbmux(
+    .d0 (RD2E),
+    .d1 (ResultW),
+    .d2 (ALUResultM),
+    .s  (ForwardBE),
+    .y  (WriteDataE)
+  );
+
+  // -------------------------------------------------------------------------
   // Mux SrcBE: entrada B de la ALU
-  //   ALUSrcE=0 → Rs2 (registro)
-  //   ALUSrcE=1 → ImmExt (inmediato)
+  //   ALUSrcE=0 → WriteDataE (dato del registro, con posible forwarding)
+  //   ALUSrcE=1 → ImmExt     (inmediato)
   // -------------------------------------------------------------------------
   wire [31:0] SrcBE;
   mux2 #(WIDTH) srcbmux(
-    .d0 (RD2E),
+    .d0 (WriteDataE),
     .d1 (ImmExtE),
     .s  (ALUSrcE),
     .y  (SrcBE)
@@ -258,7 +292,21 @@ module datapath(
   // ShiftArithE distingue srl (lógico) de sra (aritmético)
   // -------------------------------------------------------------------------
   wire [31:0] ALUResultE;
-  wire [31:0] SrcAE = RD1E; // Temporal: sin forwarding, SrcAE es simplemente RD1E
+
+  // -------------------------------------------------------------------------
+  // Mux de Forwarding para la entrada A de la ALU (Rs1) – ForwardAE
+  //   2'b00 → RD1E      (sin forwarding, valor directo del register file)
+  //   2'b01 → ResultW   (adelanta desde la etapa WB)
+  //   2'b10 → ALUResultM(adelanta desde la etapa MEM)
+  // -------------------------------------------------------------------------
+  wire [31:0] SrcAE;
+  mux3 #(WIDTH) forwardamux(
+    .d0 (RD1E),
+    .d1 (ResultW),
+    .d2 (ALUResultM),
+    .s  (ForwardAE),
+    .y  (SrcAE)
+  );
 
   alu alu(
     .a          (SrcAE),       // Conectado al wire SrcAE para facilitar waveforms
@@ -297,7 +345,7 @@ module datapath(
       RdM_r        <= 5'b0;
     end else begin
       ALUResultM_r <= ALUResultE;
-      WriteDataM_r <= RD2E;
+      WriteDataM_r <= WriteDataE;   // Usa WriteDataE (con forwarding) para 'sw'
       PCPlus4M_r   <= PCPlus4E;
       ImmExtM_r    <= ImmExtE;    // NUEVO: para LUI
       RdM_r        <= RdE_r;

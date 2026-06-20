@@ -17,6 +17,7 @@ SRCS = $(SRC_DIR)/riscvsingle.v \
        $(SRC_DIR)/controller/controller.v \
        $(SRC_DIR)/controller/maindec.v \
        $(SRC_DIR)/controller/aludec.v \
+       $(SRC_DIR)/controller/hazard_unit.v \
        $(SRC_DIR)/datapath/datapath.v \
        $(SRC_DIR)/datapath/alu.v \
        $(SRC_DIR)/datapath/regfile.v \

@@ -65,11 +65,19 @@ module riscvsingle(
   wire [4:0] RdE_w, RdM_w, RdW_w;
 
   // ---------------------------------------------------------------------------
+  // Señales de la Hazard Unit → Controller y Datapath
+  // ---------------------------------------------------------------------------
+  wire [1:0] ForwardAE_w, ForwardBE_w;
+  wire       StallF_w, StallD_w, FlushD_w, FlushE_w;
+
+  // ---------------------------------------------------------------------------
   // Controller
   // ---------------------------------------------------------------------------
   controller c(
     .clk         (clk),
     .reset       (reset),
+    // Hazard Unit
+    .FlushE      (FlushE_w),
     .OpD         (OpD),
     .Funct3D     (Funct3D),
     .Funct7b5D   (Funct7b5D),
@@ -91,6 +99,29 @@ module riscvsingle(
     .ZeroE       (ZeroE),
     .NegE        (NegE),
     .PCSrcE      (PCSrcE)
+  );
+
+  // ---------------------------------------------------------------------------
+  // Hazard Unit
+  // ---------------------------------------------------------------------------
+  hazard_unit hu(
+    .Rs1D        (Rs1D_w),
+    .Rs2D        (Rs2D_w),
+    .Rs1E        (Rs1E_w),
+    .Rs2E        (Rs2E_w),
+    .RdE         (RdE_w),
+    .ResultSrcE0 (ResultSrcE[0]),  // LSB de ResultSrc: 1 si la instr en EX es un load
+    .PCSrcE      (PCSrcE),
+    .RdM         (RdM_w),
+    .RegWriteM   (RegWriteM),
+    .RdW         (RdW_w),
+    .RegWriteW   (RegWriteW),
+    .ForwardAE   (ForwardAE_w),
+    .ForwardBE   (ForwardBE_w),
+    .StallF      (StallF_w),
+    .StallD      (StallD_w),
+    .FlushD      (FlushD_w),
+    .FlushE      (FlushE_w)
   );
 
   // ---------------------------------------------------------------------------
@@ -130,7 +161,14 @@ module riscvsingle(
     .Rs2E          (Rs2E_w),
     .RdE           (RdE_w),
     .RdM           (RdM_w),
-    .RdW           (RdW_w)
+    .RdW           (RdW_w),
+    // Hazard Unit → Datapath
+    .StallF        (StallF_w),
+    .StallD        (StallD_w),
+    .FlushD        (FlushD_w),
+    .FlushE        (FlushE_w),
+    .ForwardAE     (ForwardAE_w),
+    .ForwardBE     (ForwardBE_w)
   );
 
 endmodule
