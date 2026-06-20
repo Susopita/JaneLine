@@ -10,7 +10,7 @@ module imem(input  [31:0] a,
           $readmemh(mem_file, RAM);
       end else begin
           $display("Loading default instruction memory (prog4_flushing.mem)");
-          $readmemh("C:/My Things/UTEC/26-1/Arch/Proyecto2/JaneLine/sim/tests/prog4_flushing.mem", RAM);
+          $readmemh("prog4_flushing.mem", RAM);
       end
   end
 
