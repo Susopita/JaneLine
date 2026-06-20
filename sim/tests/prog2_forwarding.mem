@@ -1,2 +1,29 @@
-// Programa (2): ISA test Forwarding
-// Escribe aquí tus instrucciones en hexadecimal, una por línea.
+// Programa 2: Test de Dependencias de Datos (Forwarding)
+// Resultado esperado IDEAL (con Hazard Unit): mem[100] = 40 (0x00000028)
+// Resultado ACTUAL (sin Hazard Unit): mem[100] = Basura matemática
+
+// --- Inicialización ---
+00500093  // @0000  addi x1, x0, 5      ; x1 = 5
+00a00113  // @0004  addi x2, x0, 10     ; x2 = 10
+00000013  // @0008  nop                 ; Drenar pipeline
+00000013  // @000c  nop
+00000013  // @0010  nop
+
+// --- 1. Hazard EX/MEM (Distancia de 1) ---
+002081b3  // @0014  add x3, x1, x2      ; x3 = 5 + 10 = 15
+40118233  // @0018  sub x4, x3, x1      ; HAZARD: Intenta leer x3. Debería ser 15 - 5 = 10
+
+// --- 2. Hazard MEM/WB (Distancia de 2) ---
+002082b3  // @001c  add x5, x1, x2      ; x5 = 5 + 10 = 15
+0020f333  // @0020  and x6, x1, x2      ; Instrucción independiente (relleno)
+001283b3  // @0024  add x7, x5, x1      ; HAZARD: Intenta leer x5. Debería ser 15 + 5 = 20
+
+// --- 3. Hazard Doble ---
+00720433  // @0028  add x8, x4, x7      ; HAZARD: Lee x4 y x7. Debería ser 10 + 20 = 30
+004404b3  // @002c  add x9, x8, x4      ; HAZARD: Lee x8 y x4. Debería ser 30 + 10 = 40
+
+// --- BANDERA DE ÉXITO ---
+06902223  // @0030  sw x9, 100(x0)      ; Guarda la respuesta final (Esperado: 40)
+
+// --- FRENO DE SEGURIDAD ---
+0000006f  // @0034  jal x0, 0           ; Bucle infinito
