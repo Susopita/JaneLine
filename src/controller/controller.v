@@ -13,6 +13,9 @@
 module controller(
     input  clk, reset,
 
+    // Señales de la Hazard Unit
+    input        FlushE,   // 1 → limpia el registro ID/EX (inserta burbuja NOP en EX)
+
     // -------------------------------------------------------------------------
     // Entradas desde la etapa ID (campos de la instrucción decodificada)
     // -------------------------------------------------------------------------
@@ -108,28 +111,29 @@ module controller(
   reg [2:0]  Funct3E_r;               // NUEVO: para resolver beq/bne/blt/bge en EX
 
   always @(posedge clk or posedge reset) begin
-    if (reset) begin
+    if (reset || FlushE) begin
+      // Reset normal O flush por salto/stall: inserta burbuja (NOP) en la etapa EX
       ALUSrcE_r     <= 1'b0;
       MemWriteE_r   <= 1'b0;
       RegWriteE_r   <= 1'b0;
       JumpE_r       <= 1'b0;
       BranchE_r     <= 1'b0;
-      JalrE_r       <= 1'b0;    // NUEVO
-      ShiftArithE_r <= 1'b0;    // NUEVO
+      JalrE_r       <= 1'b0;
+      ShiftArithE_r <= 1'b0;
       ResultSrcE_r  <= 2'b0;
       ALUControlE_r <= 3'b0;
-      Funct3E_r     <= 3'b0;    // NUEVO
+      Funct3E_r     <= 3'b0;
     end else begin
       ALUSrcE_r     <= ALUSrcD;
       MemWriteE_r   <= MemWriteD;
       RegWriteE_r   <= RegWriteD;
       JumpE_r       <= JumpD;
       BranchE_r     <= BranchD;
-      JalrE_r       <= JalrSrcD;   // NUEVO
-      ShiftArithE_r <= ShiftArithD; // NUEVO
+      JalrE_r       <= JalrSrcD;
+      ShiftArithE_r <= ShiftArithD;
       ResultSrcE_r  <= ResultSrcD;
       ALUControlE_r <= ALUControlD;
-      Funct3E_r     <= Funct3D;    // NUEVO: captura funct3 para branches en EX
+      Funct3E_r     <= Funct3D;
     end
   end
 

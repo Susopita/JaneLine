@@ -9,8 +9,8 @@ module imem(input  [31:0] a,
           $display("Loading instruction memory from: %0s", mem_file);
           $readmemh(mem_file, RAM);
       end else begin
-          $display("Loading default instruction memory (prog1_isa.mem)");
-          $readmemh("C:/My Things/UTEC/26-1/Arch/Proyecto2/JaneLine/sim/tests/prog1_isa.mem", RAM);
+          $display("Loading default instruction memory (prog4_flushing.mem)");
+          $readmemh("C:/My Things/UTEC/26-1/Arch/Proyecto2/JaneLine/sim/tests/prog4_flushing.mem", RAM);
       end
   end
 
