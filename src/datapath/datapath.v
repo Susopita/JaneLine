@@ -1,33 +1,17 @@
 // =============================================================================
-// datapath.v  –  RISC-V 32-bit  Pipelined Datapath
-// Paso 1: Registro IF/ID introducido.
-// Paso 2: ID/EX propaga Rs1E, Rs2E. Outputs de hazard expuestos.
-// Fase B: ISA completo.
-//   Cambios:
-//   - ImmSrc ampliado a 3 bits (U-type para LUI)
-//   - NegE exportado al controller (para blt/bge)
-//   - ShiftArithE recibido del controller y pasado a la ALU
-//   - JalrE recibido del controller:
-//       jalr → PCTargetE = Rs1E + ImmExtE  (mux de SrcAE)
-//       jal  → PCTargetE = PCE  + ImmExtE  (comportamiento anterior)
-//   - LUI: ResultSrcW=11 → ImmExtW se propaga por EX/MEM y MEM/WB
-//          El mux de WB tiene 4 entradas (mux4):
-//            00 = ALUResult, 01 = ReadData, 10 = PC+4, 11 = ImmExt
-//
-// División de responsabilidades con el controller:
-//   - ZeroE y NegE salen del datapath al controller.
-//   - PCSrcE se calcula en el controller y regresa al datapath.
+// datapath.v
+// RISC-V 32-bit Pipelined Datapath
 // =============================================================================
 module datapath(
     input  clk, reset,
 
     // -------------------------------------------------------------------------
-    // Señales de control desde el controller
+    // Control signals from controller
     // -------------------------------------------------------------------------
-    // Etapa ID (combinacional, no pasa por registro)
-    input  [2:0] ImmSrc,    // AMPLIADO a 3 bits (U-type)
+    // ID Stage
+    input  [2:0] ImmSrc,
 
-    // Etapa EX (vienen del registro ID/EX del controller)
+    // EX Stage
     input        ALUSrcE,
     input  [2:0] ALUControlE,
     input  [1:0] ResultSrcE,
@@ -36,41 +20,41 @@ module datapath(
     input        JalrE,        // NUEVO: 1=jalr (SrcAE = Rs1E), 0=jal (SrcAE = PCE)
     input        ShiftArithE,  // NUEVO: 1=sra/srai (corrimiento aritmético)
 
-    // Etapa MEM (vienen del registro EX/MEM del controller)
+    // MEM Stage
     input        MemWriteM,
     input        RegWriteM,
     input  [1:0] ResultSrcM,
 
-    // Etapa WB (vienen del registro MEM/WB del controller)
+    // WB Stage
     input        RegWriteW,
     input  [1:0] ResultSrcW,
 
     // -------------------------------------------------------------------------
-    // Interfaz con la Instruction Memory (etapa IF)
+    // Instruction Memory (IF)
     // -------------------------------------------------------------------------
-    output [31:0] PCF,      // PC actual → instruction memory
-    input  [31:0] InstrF,   // instrucción leída de imem
+    output [31:0] PCF,
+    input  [31:0] InstrF,
 
     // -------------------------------------------------------------------------
-    // Campos de la instrucción decodificada → controller (etapa ID)
+    // Decoded instruction fields -> controller (ID)
     // -------------------------------------------------------------------------
     output [6:0] OpD,
     output [2:0] Funct3D,
     output       Funct7b5D,
 
     // -------------------------------------------------------------------------
-    // Flags de la ALU → controller para resolver branches (etapa EX)
+    // ALU Flags -> controller (EX)
     // -------------------------------------------------------------------------
-    output       ZeroE,  // result == 0  (beq/bne)
-    output       NegE,   // result[31]   (blt/bge) ← NUEVO
+    output       ZeroE,
+    output       NegE,
 
     // -------------------------------------------------------------------------
-    // Selección del PC (calculado en el controller)
+    // PC selection (EX)
     // -------------------------------------------------------------------------
-    input        PCSrcE,    // 1 → salto tomado (PCTargetE), 0 → PC+4
+    input        PCSrcE,
 
     // -------------------------------------------------------------------------
-    // Interfaz con la Data Memory (etapa MEM)
+    // Data Memory (MEM)
     // -------------------------------------------------------------------------
     output [31:0] ALUResultM,
     output [31:0] WriteDataM,
@@ -78,7 +62,7 @@ module datapath(
     input  [31:0] ReadDataM,
 
     // -------------------------------------------------------------------------
-    // Outputs para la Hazard Unit (Paso 5)
+    // Hazard Unit Outputs
     // -------------------------------------------------------------------------
     output [4:0] Rs1D,
     output [4:0] Rs2D,
@@ -89,34 +73,33 @@ module datapath(
     output [4:0] RdW,
 
     // -------------------------------------------------------------------------
-    // Entradas desde la Hazard Unit
+    // Hazard Unit Inputs
     // -------------------------------------------------------------------------
-    input        StallF,       // 1 → congela el PC (IF no avanza)
-    input        StallD,       // 1 → congela el registro IF/ID (ID no avanza)
-    input        FlushD,       // 1 → limpia el registro IF/ID (burbuja en ID)
-    input        FlushE,       // 1 → limpia el registro ID/EX (burbuja en EX)
-    input  [1:0] ForwardAE,    // 00=RF 01=WB 10=MEM (forwarding entrada A de ALU)
-    input  [1:0] ForwardBE     // 00=RF 01=WB 10=MEM (forwarding entrada B de ALU)
+    input        StallF,
+    input        StallD,
+    input        FlushD,
+    input        FlushE,
+    input  [1:0] ForwardAE,
+    input  [1:0] ForwardBE
 );
 
   localparam WIDTH = 32;
 
   // ===========================================================================
-  // ETAPA IF – Instruction Fetch
+  // IF Stage
   // ===========================================================================
   wire [31:0] PCNextF;
   wire [31:0] PCPlus4F;
   wire [31:0] PCTargetE;  // PC destino (calculado en EX)
 
-  // Registro del PC con soporte para Stall:
-  // Si StallF=1 el PC retiene su valor (congela la etapa IF).
+  // PC register with stall
   reg [31:0] PCF_r;
   assign PCF = PCF_r;
 
   always @(posedge clk or posedge reset) begin
     if (reset)        PCF_r <= 32'b0;
-    else if (~StallF) PCF_r <= PCNextF;  // Solo avanza si no hay stall
-    // Si StallF=1: PCF_r retiene su valor sin cambiar
+    else if (~StallF) PCF_r <= PCNextF;
+
   end
 
   adder pcadd4(
@@ -125,7 +108,7 @@ module datapath(
     .y (PCPlus4F)
   );
 
-  // PCSrcE=0 → ejecución normal (PC+4); PCSrcE=1 → salto tomado
+  // PC multiplexer
   mux2 #(WIDTH) pcmux(
     .d0 (PCPlus4F),
     .d1 (PCTargetE),
@@ -134,7 +117,7 @@ module datapath(
   );
 
   // ===========================================================================
-  // REGISTRO INTERMEDIO  IF / ID
+  // IF / ID Pipeline Register
   // ===========================================================================
   reg [31:0] InstrD;
   reg [31:0] PCD;
@@ -142,17 +125,14 @@ module datapath(
 
   always @(posedge clk or posedge reset) begin
     if (reset || FlushD) begin
-      // Reset normal O flush por salto tomado: inserta burbuja (NOP) en ID
       InstrD   <= 32'b0;
       PCD      <= 32'b0;
       PCPlus4D <= 32'b0;
     end else if (~StallD) begin
-      // Solo avanza si no hay stall de Load-Use
       InstrD   <= InstrF;
       PCD      <= PCF;
       PCPlus4D <= PCPlus4F;
     end
-    // Si StallD=1 y no FlushD: registros retienen sus valores (pipeline congelado)
   end
 
   assign OpD       = InstrD[6:0];
@@ -160,15 +140,14 @@ module datapath(
   assign Funct7b5D = InstrD[30];
 
   // ===========================================================================
-  // ETAPA ID – Instruction Decode
+  // ID Stage
   // ===========================================================================
   wire [31:0] RD1D, RD2D, ImmExtD;
   wire [4:0] RdD = InstrD[11:7];
 
 
-  // Señales de write-back para cerrar el loop del pipeline
   wire [31:0] ResultW;
-  wire [4:0]  RdW_int;   // wire interno; también sale como output RdW
+  wire [4:0]  RdW_int;
 
   regfile rf(
     .clk (clk),
@@ -189,9 +168,7 @@ module datapath(
   );
 
   // ===========================================================================
-  // REGISTRO INTERMEDIO  ID / EX
-  // Propaga datos y señales de hazard hacia la etapa EX.
-  // También propaga ImmExtD para LUI (necesita llegar hasta WB).
+  // ID / EX Pipeline Register
   // ===========================================================================
   reg [31:0] RD1E_r, RD2E_r, ImmExtE_r, PCE_r, PCPlus4E_r;
   reg [4:0]  RdE_r;
@@ -200,7 +177,6 @@ module datapath(
 
   always @(posedge clk or posedge reset) begin
     if (reset || FlushE) begin
-      // Reset normal O flush: inserta burbuja (NOP) en EX
       RD1E_r     <= 32'b0;
       RD2E_r     <= 32'b0;
       ImmExtE_r  <= 32'b0;
@@ -237,20 +213,13 @@ module datapath(
   assign RdE  = RdE_r;
 
   // ===========================================================================
-  // ETAPA EX – Execute
+  // EX Stage
   // ===========================================================================
 
   // -------------------------------------------------------------------------
-  // Mux SrcAE: entrada A de la ALU
-  //   JalrE=0 → PCE   (jal, branches B-type: dirección = PC + ImmExt)
-  //   JalrE=1 → RD1E  (jalr: dirección = Rs1 + ImmExt)
-  //   Nota: para instrucciones R-type e I-type ALU, SrcA siempre es RD1E
-  //         y JalrE nunca está activo, así que el mux solo afecta al cálculo
-  //         del PCTargetE.
-  // En el diseño de H&H el sumador del branch SIEMPRE suma PC+Imm para el
-  // target. Para jalr necesitamos Rs1+Imm. Usamos JalrE para seleccionar.
+  // Mux SrcAE for branch/jump target calculation
   // -------------------------------------------------------------------------
-  wire [31:0] SrcAE_branch; // fuente A del sumador de branch/jump target
+  wire [31:0] SrcAE_branch;
   mux2 #(WIDTH) srcamux_branch(
     .d0 (PCE),    // jal: PC + ImmExt
     .d1 (RD1E),   // jalr: Rs1 + ImmExt
@@ -259,11 +228,7 @@ module datapath(
   );
 
   // -------------------------------------------------------------------------
-  // Mux de Forwarding para la entrada B de la ALU (Rs2) – ForwardBE
-  //   2'b00 → RD2E      (sin forwarding, valor directo del register file)
-  //   2'b01 → ResultW   (adelanta desde la etapa WB)
-  //   2'b10 → ALUResultM(adelanta desde la etapa MEM)
-  // WriteDataE: es también el dato a guardar en memoria con 'sw' (con forwarding).
+  // ForwardBE Mux
   // -------------------------------------------------------------------------
   wire [31:0] WriteDataE;
   mux3 #(WIDTH) forwardbmux(
@@ -275,9 +240,7 @@ module datapath(
   );
 
   // -------------------------------------------------------------------------
-  // Mux SrcBE: entrada B de la ALU
-  //   ALUSrcE=0 → WriteDataE (dato del registro, con posible forwarding)
-  //   ALUSrcE=1 → ImmExt     (inmediato)
+  // SrcBE Mux
   // -------------------------------------------------------------------------
   wire [31:0] SrcBE;
   mux2 #(WIDTH) srcbmux(
@@ -288,16 +251,12 @@ module datapath(
   );
 
   // -------------------------------------------------------------------------
-  // ALU principal
-  // ShiftArithE distingue srl (lógico) de sra (aritmético)
+  // Main ALU
   // -------------------------------------------------------------------------
   wire [31:0] ALUResultE;
 
   // -------------------------------------------------------------------------
-  // Mux de Forwarding para la entrada A de la ALU (Rs1) – ForwardAE
-  //   2'b00 → RD1E      (sin forwarding, valor directo del register file)
-  //   2'b01 → ResultW   (adelanta desde la etapa WB)
-  //   2'b10 → ALUResultM(adelanta desde la etapa MEM)
+  // ForwardAE Mux
   // -------------------------------------------------------------------------
   wire [31:0] SrcAE;
   mux3 #(WIDTH) forwardamux(
@@ -319,9 +278,7 @@ module datapath(
   );
 
   // -------------------------------------------------------------------------
-  // Sumador de PCTarget para branch/jump
-  //   jal:  PCTargetE = PCE  + ImmExtE
-  //   jalr: PCTargetE = RD1E + ImmExtE
+  // PCTarget Adder
   // -------------------------------------------------------------------------
   adder pcaddbranch(
     .a (SrcAE_branch),
@@ -330,8 +287,7 @@ module datapath(
   );
 
   // ===========================================================================
-  // REGISTRO INTERMEDIO  EX / MEM
-  // LUI: ImmExtE se propaga hacia MEM y WB para que ResultSrc=11 lo elija.
+  // EX / MEM Pipeline Register
   // ===========================================================================
   reg [31:0] ALUResultM_r, WriteDataM_r, PCPlus4M_r, ImmExtM_r;
   reg [4:0]  RdM_r;
@@ -358,12 +314,11 @@ module datapath(
   assign RdM           = RdM_r;
 
   // ===========================================================================
-  // ETAPA MEM – Memory Access (interfaz externa)
+  // MEM Stage
   // ===========================================================================
 
   // ===========================================================================
-  // REGISTRO INTERMEDIO  MEM / WB
-  // ImmExtM también se propaga para LUI.
+  // MEM / WB Pipeline Register
   // ===========================================================================
   reg [31:0] ALUResultW_r, ReadDataW_r, PCPlus4W_r, ImmExtW_r;
   reg [4:0]  RdW_r;
@@ -388,12 +343,7 @@ module datapath(
   assign RdW_int = RdW_r;   // alias para conectar al register file
 
   // ===========================================================================
-  // ETAPA WB – Write Back
-  // Mux4 para elegir el dato a escribir en el register file:
-  //   ResultSrcW = 2'b00 → ALUResult  (R-type, I-type ALU)
-  //   ResultSrcW = 2'b01 → ReadData   (lw)
-  //   ResultSrcW = 2'b10 → PC + 4     (jal, jalr → guarda dirección de retorno)
-  //   ResultSrcW = 2'b11 → ImmExt     (lui → escribe el inmediato U-type)
+  // WB Stage
   // ===========================================================================
   mux4 #(WIDTH) resultmux(
     .d0 (ALUResultW_r),

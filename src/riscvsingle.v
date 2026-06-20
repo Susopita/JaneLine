@@ -1,10 +1,6 @@
 // =============================================================================
-// riscvsingle.v  –  Top-level: Procesador RISC-V 32-bit Pipelined
-// Fase B: ISA completo.
-//   - ImmSrc [2:0] (3 bits, cubre U-type para LUI)
-//   - NegE  : flag de signo ALU → controller (para blt/bge)
-//   - JalrE : controller → datapath (selecciona Rs1 como base del salto jalr)
-//   - ShiftArithE : controller → datapath (sra vs srl)
+// riscvsingle.v
+// Top-level: Pipelined RISC-V 32-bit Processor
 // =============================================================================
 module riscvsingle(
     input         clk, reset,
@@ -24,15 +20,13 @@ module riscvsingle(
   // Wires internos: Controller ↔ Datapath
   // ---------------------------------------------------------------------------
 
-  // Etapa ID: campos de instrucción → controller
+  // ID Stage
   wire [6:0] OpD;
   wire [2:0] Funct3D;
   wire       Funct7b5D;
-
-  // Etapa ID: ImmSrc combinacional (3 bits)
   wire [2:0] ImmSrc;
 
-  // Etapa EX: señales de control controller → datapath
+  // EX Stage
   wire       ALUSrcE;
   wire [2:0] ALUControlE;
   wire [1:0] ResultSrcE;
@@ -40,32 +34,29 @@ module riscvsingle(
   wire       RegWriteE;
   wire       JumpE;
   wire       BranchE;
-  wire       JalrE;        // jalr: target = Rs1 + Imm
-  wire       ShiftArithE;  // sra/srai: corrimiento aritmético
+  wire       JalrE;
+  wire       ShiftArithE;
 
-  // Etapa EX: flags ALU datapath → controller
-  wire       ZeroE;        // result == 0  (beq/bne)
-  wire       NegE;         // result[31]   (blt/bge)
-
-  // Etapa EX: PCSrcE controller → datapath
+  wire       ZeroE;
+  wire       NegE;
   wire       PCSrcE;
 
-  // Etapa MEM
+  // MEM Stage
   wire       MemWriteM;
   wire       RegWriteM;
   wire [1:0] ResultSrcM;
 
-  // Etapa WB
+  // WB Stage
   wire       RegWriteW;
   wire [1:0] ResultSrcW;
 
-  // Wires de hazard (datapath → Hazard Unit en Paso siguiente)
+  // Hazard wiring
   wire [4:0] Rs1D_w, Rs2D_w;
   wire [4:0] Rs1E_w, Rs2E_w;
   wire [4:0] RdE_w, RdM_w, RdW_w;
 
   // ---------------------------------------------------------------------------
-  // Señales de la Hazard Unit → Controller y Datapath
+  // Hazard Unit Signals
   // ---------------------------------------------------------------------------
   wire [1:0] ForwardAE_w, ForwardBE_w;
   wire       StallF_w, StallD_w, FlushD_w, FlushE_w;

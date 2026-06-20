@@ -1,35 +1,24 @@
 // =============================================================================
-// controller.v  –  Unidad de Control Pipelined RISC-V 32-bit
-// Fase B: ISA completo.
-//   Cambios respecto a Fase A:
-//     - ImmSrc ampliado a 3 bits (U-type para LUI)
-//     - Nuevas señales de control: JalrE (jalr), ShiftArithE (sra/srai)
-//     - PCSrcE ahora resuelve beq, bne, blt, bge usando Funct3E y los flags
-//       Zero y Neg de la ALU
-//     - Funct3D se registra en el registro ID/EX para usarse en EX
-//     - ResultSrc de 2 bits soporta LUI (ResultSrc=11 → pasa ImmExt directo)
-// Sin Hazard Unit todavía.
+// controller.v
+// Pipelined RISC-V 32-bit Controller
 // =============================================================================
 module controller(
     input  clk, reset,
 
-    // Señales de la Hazard Unit
-    input        FlushE,   // 1 → limpia el registro ID/EX (inserta burbuja NOP en EX)
+    // Hazard Unit signals
+    input        FlushE,
 
-    // -------------------------------------------------------------------------
-    // Entradas desde la etapa ID (campos de la instrucción decodificada)
+    // ID inputs
     // -------------------------------------------------------------------------
     input  [6:0] OpD,
     input  [2:0] Funct3D,
     input        Funct7b5D,
 
-    // -------------------------------------------------------------------------
-    // Salida combinacional hacia el datapath (etapa ID)
+    // ID outputs
     // -------------------------------------------------------------------------
     output [2:0] ImmSrc,     // AMPLIADO a 3 bits
 
-    // -------------------------------------------------------------------------
-    // Señales de control para la etapa EX (post-registro ID/EX)
+    // EX outputs
     // -------------------------------------------------------------------------
     output       ALUSrcE,
     output [2:0] ALUControlE,
@@ -41,21 +30,18 @@ module controller(
     output       JalrE,        // NUEVO: 1 = jalr (PC target = Rs1+Imm)
     output       ShiftArithE,  // NUEVO: 1 = corrimiento aritmético (sra/srai)
 
-    // -------------------------------------------------------------------------
-    // Señales de control para la etapa MEM (post-registro EX/MEM)
+    // MEM outputs
     // -------------------------------------------------------------------------
     output       MemWriteM,
     output       RegWriteM,
     output [1:0] ResultSrcM,
 
-    // -------------------------------------------------------------------------
-    // Señales de control para la etapa WB (post-registro MEM/WB)
+    // WB outputs
     // -------------------------------------------------------------------------
     output       RegWriteW,
     output [1:0] ResultSrcW,
 
-    // -------------------------------------------------------------------------
-    // Flags de la ALU (etapa EX) para resolver branches
+    // ALU Flags (EX)
     // -------------------------------------------------------------------------
     input        ZeroE,    // result == 0  (beq, bne)
     input        NegE,     // result[31]   (blt, bge)
@@ -63,7 +49,7 @@ module controller(
 );
 
   // ---------------------------------------------------------------------------
-  // Etapa ID – Decodificación combinacional
+  // ID Stage
   // ---------------------------------------------------------------------------
   wire [2:0] ImmSrcD;
   wire [1:0] ALUOpD;
@@ -96,13 +82,10 @@ module controller(
     .ShiftArith (ShiftArithD)  // NUEVO
   );
 
-  // ImmSrc es combinacional (etapa ID, no se registra para llegar al extensor)
   assign ImmSrc = ImmSrcD;
 
   // ---------------------------------------------------------------------------
-  // Registro ID / EX
-  // Propaga todas las señales de control hacia la etapa EX.
-  // Incluye Funct3 para resolver el tipo de branch en EX.
+  // ID / EX Pipeline Register
   // ---------------------------------------------------------------------------
   reg        ALUSrcE_r, MemWriteE_r, RegWriteE_r, JumpE_r, BranchE_r;
   reg        JalrE_r, ShiftArithE_r;  // NUEVO
@@ -112,7 +95,6 @@ module controller(
 
   always @(posedge clk or posedge reset) begin
     if (reset || FlushE) begin
-      // Reset normal O flush por salto/stall: inserta burbuja (NOP) en la etapa EX
       ALUSrcE_r     <= 1'b0;
       MemWriteE_r   <= 1'b0;
       RegWriteE_r   <= 1'b0;
@@ -148,16 +130,7 @@ module controller(
   assign ALUControlE = ALUControlE_r;
 
   // ---------------------------------------------------------------------------
-  // Resolución de branch en la etapa EX
-  //
-  // La ALU realiza Rs1E - Rs2E (SUB) para todas las instrucciones B-type.
-  // El funct3 determina la condición:
-  //   000 (beq) : toma si resultado == 0        → ZeroE
-  //   001 (bne) : toma si resultado != 0        → ~ZeroE
-  //   100 (blt) : toma si resultado  < 0 (signed) → NegE
-  //   101 (bge) : toma si resultado >= 0 (signed) → ~NegE
-  //
-  // Jump incondicional: jal siempre toma; jalr también (JumpE=1).
+  // EX Stage Branch Resolution
   // ---------------------------------------------------------------------------
   wire BranchTakenE;
   assign BranchTakenE =
@@ -171,7 +144,7 @@ module controller(
   assign PCSrcE = BranchTakenE | JumpE;
 
   // ---------------------------------------------------------------------------
-  // Registro EX / MEM
+  // EX / MEM Pipeline Register
   // ---------------------------------------------------------------------------
   reg        MemWriteM_r, RegWriteM_r;
   reg [1:0]  ResultSrcM_r;
@@ -193,7 +166,7 @@ module controller(
   assign ResultSrcM = ResultSrcM_r;
 
   // ---------------------------------------------------------------------------
-  // Registro MEM / WB
+  // MEM / WB Pipeline Register
   // ---------------------------------------------------------------------------
   reg        RegWriteW_r;
   reg [1:0]  ResultSrcW_r;
