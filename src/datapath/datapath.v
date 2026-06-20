@@ -146,6 +146,8 @@ module datapath(
   // ETAPA ID – Instruction Decode
   // ===========================================================================
   wire [31:0] RD1D, RD2D, ImmExtD;
+  wire [4:0] RdD = InstrD[11:7];
+
 
   // Señales de write-back para cerrar el loop del pipeline
   wire [31:0] ResultW;
@@ -256,9 +258,10 @@ module datapath(
   // ShiftArithE distingue srl (lógico) de sra (aritmético)
   // -------------------------------------------------------------------------
   wire [31:0] ALUResultE;
+  wire [31:0] SrcAE = RD1E; // Temporal: sin forwarding, SrcAE es simplemente RD1E
 
   alu alu(
-    .a          (RD1E),        // SrcA de la ALU siempre es RD1E (operando de datos)
+    .a          (SrcAE),       // Conectado al wire SrcAE para facilitar waveforms
     .b          (SrcBE),
     .alucontrol (ALUControlE),
     .ShiftArith (ShiftArithE), // NUEVO

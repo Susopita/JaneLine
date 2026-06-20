@@ -1,2 +1,30 @@
-// Programa (3): ISA test Stalling
-// Escribe aquí tus instrucciones en hexadecimal, una por línea.
+// Programa 3: Test de Load-Use Hazard (Stalling)
+// Resultado esperado IDEAL (con Hazard Unit): mem[104] = 40 (0x00000028)
+// Resultado ACTUAL (sin Hazard Unit): mem[104] = Basura matemática
+
+// --- 1. Inicialización de Memoria ---
+06400093  // @0000  addi x1, x0, 100    ; Puntero x1 = 100
+01400113  // @0004  addi x2, x0, 20     ; x2 = 20
+0020a023  // @0008  sw   x2, 0(x1)      ; Guarda 20 en la dir 100. mem[100] = 20
+
+// --- NOPs para drenar la inicialización ---
+00000013  // @000c  nop
+00000013  // @0010  nop
+00000013  // @0014  nop
+
+// --- 2. El Load-Use Hazard ---
+0000a183  // @0018  lw   x3, 0(x1)      ; Carga mem[100]. x3 debería ser 20
+00218233  // @001c  add  x4, x3, x2     ; HAZARD: Intenta leer x3 en la etapa EX. 
+          //                            ; Como lw aún está en MEM, leerá basura.
+          //                            ; Resultado esperado: 20 + 20 = 40
+
+// --- NOPs para drenar el pipeline ---
+00000013  // @0020  nop
+00000013  // @0024  nop
+00000013  // @0028  nop
+
+// --- 3. BANDERA DE ÉXITO ---
+06402423  // @002c  sw   x4, 104(x0)    ; Guarda la respuesta en dir 104. (Esperado: 40)
+
+// --- 4. FRENO DE SEGURIDAD ---
+0000006f  // @0030  jal  x0, 0          ; Bucle infinito
