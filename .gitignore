@@ -4,6 +4,7 @@ build/
 # Simulation output
 sim/sim.vcd
 sim/*.vcd
+sim/vcd/
 
 # Vivado / Xilinx project files
 *.xpr

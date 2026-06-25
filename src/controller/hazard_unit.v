@@ -77,6 +77,7 @@ module hazard_unit(
   //
   // Prioridad: MEM (más reciente) tiene precedencia sobre WB (más antigua).
   // ===========================================================================
+`ifndef DISABLE_HAZARD_UNIT
   always @(*) begin
 
     // --- Forwarding para la entrada A de la ALU (Rs1E) ---
@@ -139,5 +140,15 @@ module hazard_unit(
   //   - Por un salto tomado (PCSrcE): la instrucción en EX es la errónea
   //   - Por un Load-Use stall (lwStall): se inserta una burbuja forzada
   assign FlushE = PCSrcE | lwStall;
+`else
+  initial begin
+    ForwardAE = 2'b00;
+    ForwardBE = 2'b00;
+  end
+  assign StallF = 1'b0;
+  assign StallD = 1'b0;
+  assign FlushD = 1'b0;
+  assign FlushE = 1'b0;
+`endif
 
 endmodule

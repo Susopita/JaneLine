@@ -1,6 +1,11 @@
 # Makefile para la Simulación del Procesador RISC-V
 # Autogenerado por Antigravity
 
+# Corregir TMPDIR si apunta a un directorio inexistente (común en nix-shell persistente)
+ifeq ($(wildcard $(TMPDIR)),)
+export TMPDIR := /tmp
+endif
+
 # Herramientas
 IVERILOG = iverilog
 VVP      = vvp
@@ -19,6 +24,7 @@ SRCS = $(SRC_DIR)/riscvsingle.v \
        $(SRC_DIR)/controller/aludec.v \
        $(SRC_DIR)/controller/hazard_unit.v \
        $(SRC_DIR)/datapath/datapath.v \
+       $(SRC_DIR)/datapath/decompressor.v \
        $(SRC_DIR)/datapath/alu.v \
        $(SRC_DIR)/datapath/regfile.v \
        $(SRC_DIR)/datapath/extend.v \
@@ -36,7 +42,7 @@ SIM_SRCS = $(SIM_DIR)/testbench.v \
 
 # Archivos de salida
 SIM_OUT  = $(BUILD_DIR)/sim.out
-VCD_FILE = sim/sim.vcd
+VCD_FILE = sim/vcd/$(TEST:.mem=.vcd)
 
 .PHONY: all run compile wave clean directories run-test run-all-tests
 
@@ -46,10 +52,14 @@ all: run
 # Crear directorio de compilación
 directories:
 	mkdir -p $(BUILD_DIR)
+	mkdir -p sim/vcd
+
+# Banderas extras para compilación
+COMP_FLAGS ?=
 
 # Compilación con iverilog
 compile: directories
-	$(IVERILOG) -o $(SIM_OUT) -I $(SRC_DIR) -I $(SIM_DIR) -I $(FPGA_DIR) $(SRCS) $(SIM_SRCS)
+	$(IVERILOG) $(COMP_FLAGS) -o $(SIM_OUT) -I $(SRC_DIR) -I $(SIM_DIR) -I $(FPGA_DIR) $(SRCS) $(SIM_SRCS)
 
 # Parámetros por defecto para pruebas individuales
 TEST_DIR ?= tests
@@ -61,12 +71,17 @@ MAX_CYCLES ?= 1000
 
 # Ejecución de la simulación por defecto (retrocompatibilidad)
 run: compile
-	cd sim && $(VVP) ../$(SIM_OUT)
+	cd sim && $(VVP) ../$(SIM_OUT) +vcd_file=vcd/sim.vcd
 
 # Ejecutar un caso de prueba individual.
 # Ejemplo: make run-test TEST=prog1_isa.mem ADDR=100 DATA=25
 run-test: compile
-	cd sim && $(VVP) ../$(SIM_OUT) +mem_file=$(TEST_DIR)/$(TEST) +expected_addr=$(ADDR) +expected_data=$(DATA) +allow_all_writes=$(ALLOW_ALL) +max_cycles=$(MAX_CYCLES)
+	cd sim && $(VVP) ../$(SIM_OUT) +mem_file=$(TEST_DIR)/$(TEST) +expected_addr=$(ADDR) +expected_data=$(DATA) +allow_all_writes=$(ALLOW_ALL) +max_cycles=$(MAX_CYCLES) +vcd_file=vcd/$(TEST:.mem=.vcd)
+
+# Ejecutar sin hazard unit
+run-test-no-hazard:
+	$(MAKE) compile COMP_FLAGS="-DDISABLE_HAZARD_UNIT"
+	cd sim && $(VVP) ../$(SIM_OUT) +mem_file=$(TEST_DIR)/$(TEST) +expected_addr=$(ADDR) +expected_data=$(DATA) +allow_all_writes=$(ALLOW_ALL) +max_cycles=$(MAX_CYCLES) +vcd_file=vcd/$(TEST:.mem=.vcd)
 
 # Ejecutar todas las pruebas ordenadamente
 run-all-tests: compile
@@ -74,20 +89,23 @@ run-all-tests: compile
 	@echo "Iniciando suite de pruebas para procesador RISC-V..."
 	@echo "=================================================="
 	@echo ""
-	@echo "[TEST 1/5] Programa (1): ISA sin dependencias"
-	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog1_isa.mem +expected_addr=100 +expected_data=25 +allow_all_writes=0
+	@echo "[TEST 1/6] Programa (1): ISA sin dependencias"
+	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog1_isa.mem +expected_addr=100 +expected_data=20 +allow_all_writes=1 +vcd_file=vcd/prog1_isa.vcd
 	@echo "--------------------------------------------------"
-	@echo "[TEST 2/5] Programa (2): Forwarding"
-	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog2_forwarding.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1
+	@echo "[TEST 2/6] Programa (2): Forwarding"
+	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog2_forwarding.mem +expected_addr=100 +expected_data=40 +allow_all_writes=1 +vcd_file=vcd/prog2_forwarding.vcd
 	@echo "--------------------------------------------------"
-	@echo "[TEST 3/5] Programa (3): Stalling"
-	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog3_stalling.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1
+	@echo "[TEST 3/6] Programa (3): Stalling"
+	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog3_stalling.mem +expected_addr=104 +expected_data=40 +allow_all_writes=1 +vcd_file=vcd/prog3_stalling.vcd
 	@echo "--------------------------------------------------"
-	@echo "[TEST 4/5] Programa (4): Flushing"
-	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog4_flushing.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1
+	@echo "[TEST 4/6] Programa (4): Flushing"
+	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog4_flushing.mem +expected_addr=108 +expected_data=0 +allow_all_writes=1 +vcd_file=vcd/prog4_flushing.vcd
 	@echo "--------------------------------------------------"
-	@echo "[TEST 5/5] Programa completo (Todos los anteriores)"
-	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog_all.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1
+	@echo "[TEST 5/6] Programa completo (Todos los anteriores)"
+	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog_all.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1 +vcd_file=vcd/prog_all.vcd
+	@echo "--------------------------------------------------"
+	@echo "[TEST 6/6] Programa (5): Instrucciones Comprimidas"
+	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog5_compressed.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1 +vcd_file=vcd/prog5_compressed.vcd
 	@echo "=================================================="
 	@echo "Suite de simulaciones finalizada."
 	@echo "=================================================="

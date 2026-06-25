@@ -105,7 +105,7 @@ module datapath(
   // ETAPA IF – Instruction Fetch
   // ===========================================================================
   wire [31:0] PCNextF;
-  wire [31:0] PCPlus4F;
+  wire [31:0] PCPlusIncF;
   wire [31:0] PCTargetE;  // PC destino (calculado en EX)
 
   // Registro del PC con soporte para Stall:
@@ -119,38 +119,55 @@ module datapath(
     // Si StallF=1: PCF_r retiene su valor sin cambiar
   end
 
-  adder pcadd4(
+  // Detección de instrucción comprimida y cálculo de incremento de PC
+  wire        is_compressedF = (InstrF[1:0] != 2'b11);
+  wire [31:0] PCIncF         = is_compressedF ? 32'd2 : 32'd4;
+
+  adder pcaddinc(
     .a (PCF),
-    .b (32'd4),
-    .y (PCPlus4F)
+    .b (PCIncF),
+    .y (PCPlusIncF)
   );
 
-  // PCSrcE=0 → ejecución normal (PC+4); PCSrcE=1 → salto tomado
+  // PCSrcE=0 → ejecución normal (PC+Inc); PCSrcE=1 → salto tomado
   mux2 #(WIDTH) pcmux(
-    .d0 (PCPlus4F),
+    .d0 (PCPlusIncF),
     .d1 (PCTargetE),
     .s  (PCSrcE),
     .y  (PCNextF)
   );
+
+  // Instanciación del Decompresor de instrucciones comprimidas
+  wire [31:0] InstrDecompressedF;
+  wire        is_decompressed_validF;
+
+  decompressor dec (
+    .instr_c  (InstrF[15:0]),
+    .instr_32 (InstrDecompressedF),
+    .is_valid (is_decompressed_validF)
+  );
+
+  // Selección de instrucción final de 32 bits a pasar a ID
+  wire [31:0] InstrSelectedF = is_compressedF ? InstrDecompressedF : InstrF;
 
   // ===========================================================================
   // REGISTRO INTERMEDIO  IF / ID
   // ===========================================================================
   reg [31:0] InstrD;
   reg [31:0] PCD;
-  reg [31:0] PCPlus4D;
+  reg [31:0] PCPlusIncD;
 
   always @(posedge clk or posedge reset) begin
     if (reset || FlushD) begin
       // Reset normal O flush por salto tomado: inserta burbuja (NOP) en ID
-      InstrD   <= 32'b0;
-      PCD      <= 32'b0;
-      PCPlus4D <= 32'b0;
+      InstrD       <= 32'b0;
+      PCD          <= 32'b0;
+      PCPlusIncD   <= 32'b0;
     end else if (~StallD) begin
       // Solo avanza si no hay stall de Load-Use
-      InstrD   <= InstrF;
-      PCD      <= PCF;
-      PCPlus4D <= PCPlus4F;
+      InstrD       <= InstrSelectedF;
+      PCD          <= PCF;
+      PCPlusIncD   <= PCPlusIncF;
     end
     // Si StallD=1 y no FlushD: registros retienen sus valores (pipeline congelado)
   end
@@ -193,7 +210,7 @@ module datapath(
   // Propaga datos y señales de hazard hacia la etapa EX.
   // También propaga ImmExtD para LUI (necesita llegar hasta WB).
   // ===========================================================================
-  reg [31:0] RD1E_r, RD2E_r, ImmExtE_r, PCE_r, PCPlus4E_r;
+  reg [31:0] RD1E_r, RD2E_r, ImmExtE_r, PCE_r, PCPlusIncE_r;
   reg [4:0]  RdE_r;
   reg [4:0]  Rs1E_r;
   reg [4:0]  Rs2E_r;
@@ -201,33 +218,33 @@ module datapath(
   always @(posedge clk or posedge reset) begin
     if (reset || FlushE) begin
       // Reset normal O flush: inserta burbuja (NOP) en EX
-      RD1E_r     <= 32'b0;
-      RD2E_r     <= 32'b0;
-      ImmExtE_r  <= 32'b0;
-      PCE_r      <= 32'b0;
-      PCPlus4E_r <= 32'b0;
-      RdE_r      <= 5'b0;
-      Rs1E_r     <= 5'b0;
-      Rs2E_r     <= 5'b0;
+      RD1E_r       <= 32'b0;
+      RD2E_r       <= 32'b0;
+      ImmExtE_r    <= 32'b0;
+      PCE_r        <= 32'b0;
+      PCPlusIncE_r <= 32'b0;
+      RdE_r        <= 5'b0;
+      Rs1E_r       <= 5'b0;
+      Rs2E_r       <= 5'b0;
     end else begin
-      RD1E_r     <= RD1D;
-      RD2E_r     <= RD2D;
-      ImmExtE_r  <= ImmExtD;
-      PCE_r      <= PCD;
-      PCPlus4E_r <= PCPlus4D;
-      RdE_r      <= InstrD[11:7];
-      Rs1E_r     <= InstrD[19:15];
-      Rs2E_r     <= InstrD[24:20];
+      RD1E_r       <= RD1D;
+      RD2E_r       <= RD2D;
+      ImmExtE_r    <= ImmExtD;
+      PCE_r        <= PCD;
+      PCPlusIncE_r <= PCPlusIncD;
+      RdE_r        <= InstrD[11:7];
+      Rs1E_r       <= InstrD[19:15];
+      Rs2E_r       <= InstrD[24:20];
     end
   end
 
   // Alias legibles
-  wire [31:0] RD1E, RD2E, ImmExtE, PCE, PCPlus4E;
-  assign RD1E     = RD1E_r;
-  assign RD2E     = RD2E_r;
-  assign ImmExtE  = ImmExtE_r;
-  assign PCE      = PCE_r;
-  assign PCPlus4E = PCPlus4E_r;
+  wire [31:0] RD1E, RD2E, ImmExtE, PCE, PCPlusIncE;
+  assign RD1E       = RD1E_r;
+  assign RD2E       = RD2E_r;
+  assign ImmExtE    = ImmExtE_r;
+  assign PCE        = PCE_r;
+  assign PCPlusIncE = PCPlusIncE_r;
 
   // Outputs de hazard
   assign Rs1D = InstrD[19:15];
@@ -333,20 +350,20 @@ module datapath(
   // REGISTRO INTERMEDIO  EX / MEM
   // LUI: ImmExtE se propaga hacia MEM y WB para que ResultSrc=11 lo elija.
   // ===========================================================================
-  reg [31:0] ALUResultM_r, WriteDataM_r, PCPlus4M_r, ImmExtM_r;
+  reg [31:0] ALUResultM_r, WriteDataM_r, PCPlusIncM_r, ImmExtM_r;
   reg [4:0]  RdM_r;
 
   always @(posedge clk or posedge reset) begin
     if (reset) begin
       ALUResultM_r <= 32'b0;
       WriteDataM_r <= 32'b0;
-      PCPlus4M_r   <= 32'b0;
+      PCPlusIncM_r <= 32'b0;
       ImmExtM_r    <= 32'b0;
       RdM_r        <= 5'b0;
     end else begin
       ALUResultM_r <= ALUResultE;
       WriteDataM_r <= WriteDataE;   // Usa WriteDataE (con forwarding) para 'sw'
-      PCPlus4M_r   <= PCPlus4E;
+      PCPlusIncM_r <= PCPlusIncE;
       ImmExtM_r    <= ImmExtE;    // NUEVO: para LUI
       RdM_r        <= RdE_r;
     end
@@ -365,20 +382,20 @@ module datapath(
   // REGISTRO INTERMEDIO  MEM / WB
   // ImmExtM también se propaga para LUI.
   // ===========================================================================
-  reg [31:0] ALUResultW_r, ReadDataW_r, PCPlus4W_r, ImmExtW_r;
+  reg [31:0] ALUResultW_r, ReadDataW_r, PCPlusIncW_r, ImmExtW_r;
   reg [4:0]  RdW_r;
 
   always @(posedge clk or posedge reset) begin
     if (reset) begin
       ALUResultW_r <= 32'b0;
       ReadDataW_r  <= 32'b0;
-      PCPlus4W_r   <= 32'b0;
+      PCPlusIncW_r <= 32'b0;
       ImmExtW_r    <= 32'b0;
       RdW_r        <= 5'b0;
     end else begin
       ALUResultW_r <= ALUResultM_r;
       ReadDataW_r  <= ReadDataM;
-      PCPlus4W_r   <= PCPlus4M_r;
+      PCPlusIncW_r <= PCPlusIncM_r;
       ImmExtW_r    <= ImmExtM_r;   // NUEVO: para LUI
       RdW_r        <= RdM_r;
     end
@@ -392,13 +409,13 @@ module datapath(
   // Mux4 para elegir el dato a escribir en el register file:
   //   ResultSrcW = 2'b00 → ALUResult  (R-type, I-type ALU)
   //   ResultSrcW = 2'b01 → ReadData   (lw)
-  //   ResultSrcW = 2'b10 → PC + 4     (jal, jalr → guarda dirección de retorno)
+  //   ResultSrcW = 2'b10 → PC + Inc   (jal, jalr → guarda dirección de retorno)
   //   ResultSrcW = 2'b11 → ImmExt     (lui → escribe el inmediato U-type)
   // ===========================================================================
   mux4 #(WIDTH) resultmux(
     .d0 (ALUResultW_r),
     .d1 (ReadDataW_r),
-    .d2 (PCPlus4W_r),
+    .d2 (PCPlusIncW_r),
     .d3 (ImmExtW_r),    // NUEVO: para LUI
     .s  (ResultSrcW),
     .y  (ResultW)

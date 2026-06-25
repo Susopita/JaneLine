@@ -1,0 +1,13 @@
+// Program 5: Test de instrucciones comprimidas (RVC Extension)
+// Evalúa las 10 instrucciones: c.lui, c.addi, c.slli, c.srli, c.srai, c.xor, c.and, c.or, c.sub, c.add
+// Resultado esperado: mem[100] = 25 (0x00000019)
+
+14416405  // @0000  [PC=0] c.lui x8, 1   ; [PC=2] c.addi x8, -16 (x8 = 4096-16 = 4080)
+80210412  // @0004  [PC=4] c.slli x8, 4  ; [PC=6] c.srli x8, 8   (x8 = (4080<<4)>>8 = 255)
+00a00493  // @0008  [PC=8] addi x9, x0, 10                       (x9 = 10, 32-bit)
+8c258485  // @000c  [PC=12] c.srai x9, 1  ; [PC=14] c.xor x8, x9 (x9 = 5; x8 = 255^5 = 250)
+8c458c65  // @0010  [PC=16] c.and x8, x9  ; [PC=18] c.or x8, x9  (x8 = 250&5 = 0; then x8 = 0|5 = 5)
+04518c05  // @0014  [PC=20] c.sub x8, x9  ; [PC=22] c.addi x8, 20 (x8 = 5-5 = 0; then x8 = 20)
+00019426  // @0018  [PC=24] c.add x8, x9  ; [PC=26] c.nop        (x8 = 20+5 = 25)
+06802223  // @001c  [PC=28] sw x8, 100(x0)                       (mem[100] = 25, 32-bit)
+0000006f  // @0020  [PC=32] jal x0, 0                            (Bucle infinito, 32-bit)

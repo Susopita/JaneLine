@@ -14,5 +14,8 @@ module imem(input  [31:0] a,
       end
   end
 
-  assign rd = RAM[a[31:2]]; // word aligned
+  // Soporte para lectura alineada a half-word (16 bits)
+  // Si a[1] == 1, la dirección no está alineada a palabra (32 bits),
+  // por lo que concatenamos la mitad superior del offset actual con la mitad inferior del offset+1.
+  assign rd = a[1] ? { ((a[31:2] < 127) ? RAM[a[31:2] + 1][15:0] : 16'b0), RAM[a[31:2]][31:16] } : RAM[a[31:2]];
 endmodule

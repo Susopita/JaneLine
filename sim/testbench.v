@@ -11,6 +11,7 @@ module testbench;
   integer    max_cycles;
   integer    cycle_count;
   reg        allow_all_writes;
+  reg [1023:0] vcd_file;
 
   // instantiate device to be tested
   top dut(
@@ -23,7 +24,11 @@ module testbench;
 
   // initialize test
   initial begin
-    $dumpfile("sim.vcd");
+    if ($value$plusargs("vcd_file=%s", vcd_file)) begin
+      $dumpfile(vcd_file);
+    end else begin
+      $dumpfile("vcd/sim.vcd");
+    end
     $dumpvars(0, testbench);
     
     // load simulation arguments
@@ -53,6 +58,7 @@ module testbench;
   always @(posedge clk) begin
     if (!reset) begin
       cycle_count = cycle_count + 1;
+
       if (cycle_count >= max_cycles) begin
         $display("Simulation timeout after %0d cycles", max_cycles);
         $finish;
