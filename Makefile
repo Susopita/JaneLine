@@ -19,6 +19,7 @@ SRCS = $(SRC_DIR)/riscvsingle.v \
        $(SRC_DIR)/controller/aludec.v \
        $(SRC_DIR)/controller/hazard_unit.v \
        $(SRC_DIR)/datapath/datapath.v \
+       $(SRC_DIR)/datapath/decompressor.v \
        $(SRC_DIR)/datapath/alu.v \
        $(SRC_DIR)/datapath/regfile.v \
        $(SRC_DIR)/datapath/extend.v \
@@ -27,6 +28,9 @@ SRCS = $(SRC_DIR)/riscvsingle.v \
        $(SRC_DIR)/common/mux2.v \
        $(SRC_DIR)/common/mux3.v \
        $(SRC_DIR)/common/mux4.v
+
+# Flags de preprocesador (e.g., -DDISABLE_HAZARD_UNIT para desactivar la Hazard Unit)
+DEFINES ?=
 
 # Archivos de simulación e integración
 SIM_SRCS = $(SIM_DIR)/testbench.v \
@@ -49,7 +53,7 @@ directories:
 
 # Compilación con iverilog
 compile: directories
-	$(IVERILOG) -o $(SIM_OUT) -I $(SRC_DIR) -I $(SIM_DIR) -I $(FPGA_DIR) $(SRCS) $(SIM_SRCS)
+	$(IVERILOG) -o $(SIM_OUT) -I $(SRC_DIR) -I $(SIM_DIR) -I $(FPGA_DIR) $(DEFINES) $(SRCS) $(SIM_SRCS)
 
 # Parámetros por defecto para pruebas individuales
 TEST_DIR ?= tests
@@ -83,10 +87,13 @@ run-all-tests: compile
 	@echo "[TEST 3/5] Programa (3): Stalling"
 	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog3_stalling.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1
 	@echo "--------------------------------------------------"
-	@echo "[TEST 4/5] Programa (4): Flushing"
+	@echo "[TEST 4/6] Programa (4): Flushing"
 	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog4_flushing.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1
 	@echo "--------------------------------------------------"
-	@echo "[TEST 5/5] Programa completo (Todos los anteriores)"
+	@echo "[TEST 5/6] Programa (5): Instrucciones Comprimidas (RVC E2)"
+	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog5_compressed.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1
+	@echo "--------------------------------------------------"
+	@echo "[TEST 6/6] Programa completo (Todos los anteriores)"
 	@cd sim && $(VVP) ../$(SIM_OUT) +mem_file=tests/prog_all.mem +expected_addr=100 +expected_data=25 +allow_all_writes=1
 	@echo "=================================================="
 	@echo "Suite de simulaciones finalizada."

@@ -16,6 +16,11 @@
 //                   las instrucciones que entraron erróneamente a las
 //                   etapas IF e ID insertando burbujas en D y en E.
 //
+// Toggle de pruebas:
+//   Compilar con -DDISABLE_HAZARD_UNIT para desactivar TODA la lógica de
+//   hazard (forwarding, stalling, flushing). Útil para pruebas unitarias
+//   donde se quiere verificar la ejecución sin dependencias de datos.
+//
 // Toda la lógica es COMBINACIONAL (sin registros internos).
 // =============================================================================
 module hazard_unit(
@@ -67,6 +72,22 @@ module hazard_unit(
     output FlushD,              // Limpia el registro IF/ID  (borra la instrucción en ID)
     output FlushE               // Limpia el registro ID/EX  (borra la instrucción en EX)
 );
+
+// =============================================================================
+// TOGGLE: Compilar con  -DDISABLE_HAZARD_UNIT  para desactivar la Hazard Unit.
+//
+// Ejemplo con iverilog:
+//   iverilog -DDISABLE_HAZARD_UNIT -o sim.out ...
+//
+// Cuando está desactivada, todas las salidas se fijan en sus valores neutros:
+//   - ForwardAE/ForwardBE = 00 (sin forwarding)
+//   - StallF/StallD = 0        (sin stalls)
+//   - FlushD/FlushE = 0        (sin flushes)
+//
+// Esto permite probar programas donde las instrucciones NO tienen dependencias
+// de datos entre ellas (e.g., tests unitarios de instrucciones individuales).
+// =============================================================================
+`ifndef DISABLE_HAZARD_UNIT
 
   // ===========================================================================
   // 1. FORWARDING – Adelantamiento de datos (Data Hazards RAW)
@@ -139,5 +160,27 @@ module hazard_unit(
   //   - Por un salto tomado (PCSrcE): la instrucción en EX es la errónea
   //   - Por un Load-Use stall (lwStall): se inserta una burbuja forzada
   assign FlushE = PCSrcE | lwStall;
+
+`else
+  // ===========================================================================
+  // HAZARD UNIT DESACTIVADA (modo de prueba)
+  //
+  // Todas las salidas fijadas a valores neutros:
+  //   - Sin forwarding → la ALU siempre lee del register file
+  //   - Sin stalls     → el pipeline nunca se congela
+  //   - Sin flushes    → nunca se insertan burbujas
+  //
+  // ¡IMPORTANTE! Solo usar con programas que NO tengan dependencias de datos
+  // entre instrucciones consecutivas (separar con NOPs si es necesario).
+  // ===========================================================================
+  always @(*) begin
+    ForwardAE = 2'b00;
+    ForwardBE = 2'b00;
+  end
+  assign StallF = 1'b0;
+  assign StallD = 1'b0;
+  assign FlushD = 1'b0;
+  assign FlushE = 1'b0;
+`endif
 
 endmodule
