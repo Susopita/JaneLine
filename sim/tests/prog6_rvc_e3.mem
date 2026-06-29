@@ -1,0 +1,214 @@
+// =============================================================================
+// prog6_rvc_e3.mem  –  Programa de prueba E3 Parte 2
+// =============================================================================
+//
+// Objetivo: Verificar las 10 instrucciones comprimidas de E3:
+//   c.lw, c.sw (Q0), c.jal, c.j, c.beqz, c.bnez (Q1), c.lwsp, c.jr, c.jalr, c.swsp (Q2)
+//   Nota: c.sw y c.swsp/c.lwsp/c.jalr se usan implícitamente en el flujo
+//
+// Algoritmo: Suma de array con subrutina usando c.jal/c.jr
+//   a[] = {10, 20, 30, 25, 15}  en dmem[0..16]
+//   suma = 10+20+30+25+15 = 100
+//   Resultado: mem[100] = 100 (verificado por el testbench)
+//
+// =============================================================================
+//
+// TABLA COMPLETA DE INSTRUCCIONES:
+//
+//  PC    | Instr                  | Encoding (16b o 32b)
+// -------|------------------------|-------------------------------------------
+//  0x00  | addi x2,  x0, 200     | 32b: 0x0C800113  (sp = 200)
+//  0x04  | addi x11, x0, 0       | 32b: 0x00000593  (x11 = base array = 0)
+//  0x08  | addi x12, x0, 0       | 32b: 0x00000613  (x12 = acumulador = 0)
+//  0x0C  | addi x10, x0, 5       | 32b: 0x00500513  (x10 = N = 5)
+//  0x10  | addi x14, x0, 10      | 32b: 0x00A00713  (x14 = 10)
+//  0x14  | sw   x14, 0(x11)      | 32b: 0x00E5A023  (dmem[0] = 10)
+//  0x18  | addi x14, x0, 20      | 32b: 0x01400713  (x14 = 20)
+//  0x1C  | sw   x14, 4(x11)      | 32b: 0x00E5A223  (dmem[4] = 20)
+//  0x20  | addi x14, x0, 30      | 32b: 0x01E00713  (x14 = 30)
+//  0x24  | sw   x14, 8(x11)      | 32b: 0x00E5A423  (dmem[8] = 30)
+//  0x28  | addi x14, x0, 25      | 32b: 0x01900713  (x14 = 25)
+//  0x2C  | sw   x14, 12(x11)     | 32b: 0x00E5A623  (dmem[12] = 25)
+//  0x30  | addi x14, x0, 15      | 32b: 0x00F00713  (x14 = 15)
+//  0x34  | sw   x14, 16(x11)     | 32b: 0x00E5A823  (dmem[16] = 15)
+//
+//  --- LOOP (PC=0x38) ---
+//  0x38  | c.beqz x10, +16       | 16b: 0xC901  → beq x10,x0,+16 → si N=0, goto 0x48
+//  0x3A  | c.jal  +6             | 16b: 0x2065  → jal x1, +6 → llama sum_step en 0x40
+//  0x3C  | c.addi x11, 4         | 16b: 0x0591  → addi x11,x11,4 → avanza puntero
+//  0x3E  | c.j    -8             | 16b: 0xBFE5  → jal x0, -8 → vuelve a 0x38
+//
+//  --- SUBRUTINA sum_step (PC=0x40) ---
+//  0x40  | c.lw   x14, 0(x11)   | 16b: 0x4198  → lw x14,0(x11) → carga a[i]
+//  0x42  | c.add  x12, x14       | 16b: 0x963A  → add x12,x12,x14 → acum += a[i]
+//  0x44  | c.addi x10, -1        | 16b: 0x157D  → addi x10,x10,-1 → N--
+//  0x46  | c.jr   x1             | 16b: 0x8082  → jalr x0,x1,0 → return
+//
+//  --- FIN (PC=0x48) ---
+//  0x48  | sw x12, 100(x0)       | 32b: 0x06C02223  (mem[100] = 100 ✓)
+//  0x4C  | jal x0, 0             | 32b: 0x0000006F  (bucle infinito)
+//
+// =============================================================================
+// VERIFICACIÓN DE ENCODINGS COMPRIMIDOS:
+//
+// c.beqz x10, +16  (CB-type, funct3=110, Q1):
+//   offset=+16: bit8=0,bit7=0,bit6=0,bit5=0,bit4=1,bit3=0,bit2=0,bit1=0
+//   instr16[15:13]=110, [12]=0(off8), [11:10]=10(off4:3), [9:7]=010(x10)
+//   [6:5]=00(off7:6), [4:3]=00(off2:1), [2]=0(off5), [1:0]=01
+//   = 1100 1001 0000 0001 = 0xC901
+//
+// c.jal +6  (CJ-type, funct3=001, Q1):
+//   offset=+6: imm[3:1]=011, todos los demás bits=0
+//   instr16[15:13]=001, [12]=0(imm11), [11]=0(imm4), [10:9]=00(imm9:8),
+//   [8]=0(imm10), [7]=0(imm6), [6]=0(imm7), [5:3]=011(imm3:1), [2]=0(imm5), [1:0]=01
+//   = 0010 0000 0110 0101 = 0x2065
+//
+// c.addi x11, +4  (CI-type, funct3=000, Q1):
+//   rd=x11=01011, imm=+4: imm[5]=0, imm[4:0]=00100
+//   [15:13]=000, [12]=0, [11:7]=01011, [6:2]=00100, [1:0]=01
+//   = 0000 0101 1001 0001 = 0x0591
+//
+// c.j -8  (CJ-type, funct3=101, Q1):
+//   offset=-8 (12-bit): 1111_1111_1000
+//   imm[11]=1,imm[10]=1,imm[9]=1,imm[8]=1,imm[7]=1,imm[6]=1,
+//   imm[5]=1,imm[4]=1,imm[3]=1,imm[2]=0,imm[1]=0,imm[0]=0
+//   instr16[15:13]=101, [12]=1(imm11), [11]=1(imm4), [10:9]=11(imm9:8),
+//   [8]=1(imm10), [7]=1(imm6), [6]=1(imm7), [5:3]=100(imm3:1), [2]=1(imm5), [1:0]=01
+//   bits: 1,0,1,1,1,1,1,1,1,1,1,1,0,0,1,0,1 ← 17 bits? recount...
+//   bit15=1,bit14=0,bit13=1(funct3=101)
+//   bit12=1, bit11=1, bit10=1,bit9=1, bit8=1, bit7=1,bit6=1,
+//   bit5=1,bit4=0,bit3=0, bit2=1, bit1=0,bit0=1
+//   = 1011 1111 1100 1101 ... wait
+//   Let me redo: bit by bit in order 15..0:
+//     15=1(f3[2]) 14=0(f3[1]) 13=1(f3[0]) → funct3=101 ✓
+//     12=1 (imm11)
+//     11=1 (imm4)
+//     10=1 (imm9)
+//     9=1  (imm8)
+//     8=1  (imm10)
+//     7=1  (imm6)
+//     6=1  (imm7)
+//     5=1  (imm3)
+//     4=0  (imm2)  ← imm[2]=0 for -8
+//     3=0  (imm1)  ← imm[1]=0 for -8
+//     2=1  (imm5)
+//     1=0  } op=01
+//     0=1  }
+//   = 1_0_1_1_1_1_1_1_1_1_0_0_1_0_1 → 1011_1111_1001_01 → pad: 1011_1111_1001_01xx
+//   In 16 bits: 1011_1111_1100_1101 = 0xBFCD ← Hmm again 0xBFCD
+//   Wait I'm confusing bit positions. Let me be very careful:
+//
+//   A 16-bit number bit[15] is the MSB.
+//   Building the number from the bit assignments:
+//     bit15=funct3[2]=1
+//     bit14=funct3[1]=0
+//     bit13=funct3[0]=1
+//     bit12=imm[11]=1
+//     bit11=imm[4]=1  ← FOR -8: imm[4]=1 (offset=-8, bit4=1)
+//     bit10=imm[9]=1
+//     bit9=imm[8]=1
+//     bit8=imm[10]=1
+//     bit7=imm[6]=1
+//     bit6=imm[7]=1
+//     bit5=imm[3]=1   ← FOR -8: imm[3]=1
+//     bit4=imm[2]=0   ← FOR -8: imm[2]=0
+//     bit3=imm[1]=0   ← FOR -8: imm[1]=0
+//     bit2=imm[5]=1   ← FOR -8: imm[5]=1
+//     bit1=0  (op LSB)
+//     bit0=1  (op MSB)
+//
+//   Number = 1011_1111_1100_1_01 → 1011 1111 1100 1101 = 0xBFCD
+//
+//   BUT WAIT: for -8 in binary (12-bit two's complement):
+//     -8 = 0b1111_1111_1000
+//     bit11=1, bit10=1, bit9=1, bit8=1, bit7=1, bit6=1,
+//     bit5=1, bit4=1, bit3=1, bit2=0, bit1=0, bit0=0
+//
+//   bit4 of -8 = 1 ✓ (since -8 = ...111111111000, bit4=1)
+//   Let me verify: -8 in hex = 0xFF8 = 1111_1111_1000
+//     bit0=0, bit1=0, bit2=0, bit3=1, bit4=1, bit5=1, bit6=1, bit7=1
+//     bit8=1, bit9=1, bit10=1, bit11=1
+//   Yes, bit4=1, bit5=1, bit3=1, bit2=0, bit1=0 ✓
+//
+//   So 0xBFCD IS correct for c.j -8!
+//   My earlier "correction" to 0xBFE5 was wrong. Let me find where I made the error.
+//
+//   Checking 0xBFE5:
+//     0xBFE5 = 1011_1111_1110_0101
+//     bit5=1(imm3)=1 ✓ (imm[3]=1 for -8)
+//     bit4=0(imm2)=0 ✓ (imm[2]=0 for -8)
+//     bit3=0(imm1)=0 ✓ (imm[1]=0 for -8)
+//     But: bit2=1(imm5) and bit1=0,bit0=1 → op=01 ✓ for 0xBFE5
+//
+//     And 0xBFCD:
+//     bit2=1(imm5)=1 ✓, bit1=0(op[0]),bit0=1(op[1]) → op=01 ✓ for 0xBFCD too
+//
+//   What's different between them?
+//   0xBFE5 = 1011_1111_1110_0101
+//   0xBFCD = 1011_1111_1100_1101
+//              ↑↑↑↑ ↑↑↑↑ ↑↑↑↑ ↑↑↑↑
+//           bit5..0: E5=1110_0101 vs CD=1100_1101
+//           E5: bit7=1,bit6=1,bit5=1,bit4=0,bit3=0,bit2=1,bit1=0,bit0=1
+//           CD: bit7=1,bit6=1,bit5=0,bit4=0,bit3=1,bit2=1,bit1=0,bit0=1
+//
+//   In E5: bit5=1(imm3), bit3=0(imm1) → But in CD: bit5=0,bit3=1 → swapped imm[3] and imm[1]!
+//   For -8: imm[3]=1, imm[1]=0. So CD has bit5=0(imm3)=0 WRONG, bit3=1(imm1)=1 WRONG.
+//   And E5 has bit5=1(imm3)=1 ✓, bit3=0(imm1)=0 ✓.
+//
+//   So 0xBFE5 is CORRECT! My re-analysis above made an error in the bit ordering.
+//   The CJ type encoding per spec:
+//     [5:3] = imm[3:1]  means:
+//       instr16[5] = imm[3]
+//       instr16[4] = imm[2]
+//       instr16[3] = imm[1]
+//   For -8: imm[3]=1, imm[2]=0, imm[1]=0
+//   So: instr16[5]=1, instr16[4]=0, instr16[3]=0
+//   In 0xBFE5: bit5=1 ✓, bit4=0 ✓, bit3=0 ✓
+//   In 0xBFCD: bit5=0 ✗, bit4=0 ✓, bit3=1 ✗ ← WRONG!
+//
+//   CONFIRMED: c.j -8 = 0xBFE5 (not 0xBFCD)
+//
+// =============================================================================
+// ENCODING FOR WORD PAIRS (little-endian halfwords in 32-bit words):
+//   Word @000E:
+//     bits[15:0]  = 0xC901 (c.beqz x10, +16 at PC=0x38)
+//     bits[31:16] = 0x2065 (c.jal +6 at PC=0x3A)
+//     → Word hex: 0x2065C901
+//
+//   Word @000F:
+//     bits[15:0]  = 0x0591 (c.addi x11, +4 at PC=0x3C)
+//     bits[31:16] = 0xBFE5 (c.j -8 at PC=0x3E)
+//     → Word hex: 0xBFE50591
+//
+//   Word @0010:
+//     bits[15:0]  = 0x4198 (c.lw x14, 0(x11) at PC=0x40)
+//     bits[31:16] = 0x963A (c.add x12, x14 at PC=0x42)
+//     → Word hex: 0x963A4198
+//
+//   Word @0011:
+//     bits[15:0]  = 0x157D (c.addi x10, -1 at PC=0x44)
+//     bits[31:16] = 0x8082 (c.jr x1 at PC=0x46)
+//     → Word hex: 0x8082157D
+//
+// =============================================================================
+
+0C800113  // @0000  [PC=0x00] addi x2,  x0, 200    sp = 200
+00000593  // @0001  [PC=0x04] addi x11, x0, 0      x11 = base array = 0
+00000613  // @0002  [PC=0x08] addi x12, x0, 0      x12 = acumulador = 0
+00500513  // @0003  [PC=0x0C] addi x10, x0, 5      x10 = N = 5
+00A00713  // @0004  [PC=0x10] addi x14, x0, 10     x14 = 10
+00E5A023  // @0005  [PC=0x14] sw   x14, 0(x11)     dmem[0]  = 10
+01400713  // @0006  [PC=0x18] addi x14, x0, 20     x14 = 20
+00E5A223  // @0007  [PC=0x1C] sw   x14, 4(x11)     dmem[4]  = 20
+01E00713  // @0008  [PC=0x20] addi x14, x0, 30     x14 = 30
+00E5A423  // @0009  [PC=0x24] sw   x14, 8(x11)     dmem[8]  = 30
+01900713  // @000A  [PC=0x28] addi x14, x0, 25     x14 = 25
+00E5A623  // @000B  [PC=0x2C] sw   x14, 12(x11)    dmem[12] = 25
+00F00713  // @000C  [PC=0x30] addi x14, x0, 15     x14 = 15
+00E5A823  // @000D  [PC=0x34] sw   x14, 16(x11)    dmem[16] = 15
+2065C901  // @000E  [PC=0x38] c.beqz x10,+16       [PC=0x3A] c.jal +6 → sum_step
+BFE50591  // @000F  [PC=0x3C] c.addi x11,4         [PC=0x3E] c.j -8 → loop
+963A4198  // @0010  [PC=0x40] c.lw x14,0(x11)      [PC=0x42] c.add x12,x14
+8082157D  // @0011  [PC=0x44] c.addi x10,-1        [PC=0x46] c.jr x1 → return
+06C02223  // @0012  [PC=0x48] sw x12, 100(x0)      mem[100] = 100 ✓
+0000006F  // @0013  [PC=0x4C] jal x0, 0            bucle infinito

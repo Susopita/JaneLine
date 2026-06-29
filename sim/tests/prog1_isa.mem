@@ -1,0 +1,146 @@
+// riscvtest.mem — una instrucción de cada tipo del enunciado
+//
+// Resultado esperado al final:
+//   x1=20      x2=8       x3=-4      x4=235     x5=31      x6=4
+//   x7=80      x8=10      x9=-2      x10=28     x11=12     x12=2048
+//   x13=28     x14=0      x15=-1     x16=28     x17=0      x18=0xABCDE000
+//   x19=20     x20=8      x21=-4
+//   x22=1      x23=2      x24=3      x25=4      x27=5
+//   x26=0x0174 (PC+4 del JAL)        x28=0x0190 (PC+4 del JALR)
+//
+// Nota: jalr salta a x26=0x0174; el pipeline descarta lo que hay ahí.
+//       Lo que se verifica es que x28 recibe el retorno correcto.
+// 
+// Bandera de éxito al final: mem[100] = 20
+//
+// --- Valores base ---
+01400093  // @0000  addi x1,  x0, 20      ; x1 = 20
+00800113  // @0004  addi x2,  x0, 8       ; x2 = 8
+ffc00193  // @0008  addi x3,  x0, -4      ; x3 = -4
+00000013  // @000c  nop
+00000013  // @0010  nop
+
+// --- I-type ALU ---
+0ff0c213  // @0014  xori x4,  x1, 0xFF    ; x4 = 20^255 = 235
+00000013  // @0018  nop
+00000013  // @001c  nop
+00f0e293  // @0020  ori  x5,  x1, 0xF     ; x5 = 20|15 = 31
+00000013  // @0024  nop
+00000013  // @0028  nop
+00f0f313  // @002c  andi x6,  x1, 0xF     ; x6 = 20&15 = 4
+00000013  // @0030  nop
+00000013  // @0034  nop
+00209393  // @0038  slli x7,  x1, 2       ; x7 = 20<<2 = 80
+00000013  // @003c  nop
+00000013  // @0040  nop
+0010d413  // @0044  srli x8,  x1, 1       ; x8 = 20>>1 = 10
+00000013  // @0048  nop
+00000013  // @004c  nop
+4011d493  // @0050  srai x9,  x3, 1       ; x9 = -4>>>1 = -2
+00000013  // @0054  nop
+00000013  // @0058  nop
+
+// --- R-type ---
+00208533  // @005c  add  x10, x1, x2      ; x10 = 20+8 = 28
+00000013  // @0060  nop
+00000013  // @0064  nop
+402085b3  // @0068  sub  x11, x1, x2      ; x11 = 20-8 = 12
+00000013  // @006c  nop
+00000013  // @0070  nop
+00211633  // @0074  sll  x12, x2, x2      ; x12 = 8<<8 = 2048
+00000013  // @0078  nop
+00000013  // @007c  nop
+0020c6b3  // @0080  xor  x13, x1, x2      ; x13 = 20^8 = 28
+00000013  // @0084  nop
+00000013  // @0088  nop
+0020d733  // @008c  srl  x14, x1, x2      ; x14 = 20>>8 = 0
+00000013  // @0090  nop
+00000013  // @0094  nop
+4021d7b3  // @0098  sra  x15, x3, x2      ; x15 = -4>>>8 = -1
+00000013  // @009c  nop
+00000013  // @00a0  nop
+0020e833  // @00a4  or   x16, x1, x2      ; x16 = 20|8 = 28
+00000013  // @00a8  nop
+00000013  // @00ac  nop
+0020f8b3  // @00b0  and  x17, x1, x2      ; x17 = 20&8 = 0
+00000013  // @00b4  nop
+00000013  // @00b8  nop
+
+// --- LUI ---
+abcde937  // @00bc  lui  x18, 0xABCDE     ; x18 = 0xABCDE000
+00000013  // @00c0  nop
+00000013  // @00c4  nop
+
+// --- SW / LW ---
+00102023  // @00c8  sw   x1,  0(x0)       ; mem[0] = 20
+00202223  // @00cc  sw   x2,  4(x0)       ; mem[4] = 8
+00302423  // @00d0  sw   x3,  8(x0)       ; mem[8] = -4
+00000013  // @00d4  nop
+00000013  // @00d8  nop
+00002983  // @00dc  lw   x19, 0(x0)       ; x19 = 20
+00000013  // @00e0  nop
+00000013  // @00e4  nop
+00402a03  // @00e8  lw   x20, 4(x0)       ; x20 = 8
+00000013  // @00ec  nop
+00000013  // @00f0  nop
+00802a83  // @00f4  lw   x21, 8(x0)       ; x21 = -4
+00000013  // @00f8  nop
+00000013  // @00fc  nop
+
+// --- BEQ tomado (x1==x1) ---
+00108663  // @0100  beq  x1, x1,  +12     ; tomado, salta 3
+06300b13  // @0104  addi x22, x0, 99      ; NO ejecutar
+06300b13  // @0108  addi x22, x0, 99      ; NO ejecutar
+06300b13  // @010c  addi x22, x0, 99      ; NO ejecutar
+00100b13  // @0110  addi x22, x0, 1       ; x22 = 1  <- target BEQ
+00000013  // @0114  nop
+00000013  // @0118  nop
+
+// --- BNE tomado (x1=20 != x2=8) ---
+00209663  // @011c  bne  x1, x2,  +12     ; tomado, salta 3
+06300b93  // @0120  addi x23, x0, 99      ; NO ejecutar
+06300b93  // @0124  addi x23, x0, 99      ; NO ejecutar
+06300b93  // @0128  addi x23, x0, 99      ; NO ejecutar
+00200b93  // @012c  addi x23, x0, 2       ; x23 = 2  <- target BNE
+00000013  // @0130  nop
+00000013  // @0134  nop
+
+// --- BLT tomado (x3=-4 < x2=8) ---
+0021c663  // @0138  blt  x3, x2,  +12     ; tomado, salta 3
+06300c13  // @013c  addi x24, x0, 99      ; NO ejecutar
+06300c13  // @0140  addi x24, x0, 99      ; NO ejecutar
+06300c13  // @0144  addi x24, x0, 99      ; NO ejecutar
+00300c13  // @0148  addi x24, x0, 3       ; x24 = 3  <- target BLT
+00000013  // @014c  nop
+00000013  // @0150  nop
+
+// --- BGE tomado (x1=20 >= x2=8) ---
+0020d663  // @0154  bge  x1, x2,  +12     ; tomado, salta 3
+06300c93  // @0158  addi x25, x0, 99      ; NO ejecutar
+06300c93  // @015c  addi x25, x0, 99      ; NO ejecutar
+06300c93  // @0160  addi x25, x0, 99      ; NO ejecutar
+00400c93  // @0164  addi x25, x0, 4       ; x25 = 4  <- target BGE
+00000013  // @0168  nop
+00000013  // @016c  nop
+
+// --- JAL (x26 = 0x0174, salta a 0x0180) ---
+01000d6f  // @0170  jal  x26, +16         ; x26=0x0174, salta a 0x0180
+0240006f  // @0174  jal  x0, +36          ; <- TRAMPOLÍN: JALR retorna aquí. Salta a 0x0198
+00000013  // @0178  nop
+00000013  // @017c  nop
+00500d93  // @0180  addi x27, x0, 5       ; x27 = 5  <- Target de JAL (0x0170)
+00000013  // @0184  nop
+00000013  // @0188  nop
+
+// --- JALR (salta a x26=0x0174, x28 = 0x0190) ---
+000d0e67  // @018c  jalr x28, x26, 0      ; x28=0x0190, salta a 0x0174
+00000013  // @0190  nop
+00000013  // @0194  nop
+
+// --- NOPs para vaciar el pipeline ---
+00000013  // @0198  nop                   ; <- El trampolín aterriza aquí a salvo
+00000013  // @019c  nop
+00000013  // @01a0  nop
+
+// --- BANDERA DE ÉXITO ---
+06102223  // @01a4  sw x1, 100(x0)        ; mem[100] = 20

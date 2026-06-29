@@ -1,0 +1,58 @@
+# Build artifacts
+build/
+
+# Simulation output
+sim/sim.vcd
+sim/*.vcd
+sim/vcd/
+
+# Icarus Verilog / Simulación autogenerados
+*.vvp
+*.out
+*.rom
+
+# Vivado / Xilinx project files
+*.xpr
+*.xsa
+*.bit
+*.ltx
+*.log
+*.jou
+*.str
+*.mcs
+*.prm
+*.xdc.bak
+.Xil/
+vivado*/
+runs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+*.srcs/
+
+# ModelSim / QuestaSim
+work/
+*.wlf
+transcript
+vsim.wlf
+
+# GTKWave
+*.gtkw
+*.sav
+
+# Nix
+result
+result-*
+.direnv/
+
+# Editor / OS artifacts
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.helix/
+
+# Skills
+.agents/skills/skill-creator/

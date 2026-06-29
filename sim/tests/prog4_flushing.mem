@@ -1,0 +1,27 @@
+// Programa 4: Test de Control Hazard (Branch y Flush)
+// Resultado esperado IDEAL (con Hazard Unit): mem[108] = 0 (0x00000000)
+// Resultado ACTUAL (sin Hazard Unit): mem[108] = 100 (0x00000064) debido a las instrucciones fantasma
+
+// --- 1. Inicialización ---
+00000093  // @0000  addi x1, x0, 0      ; x1 = 0
+00000113  // @0004  addi x2, x0, 0      ; x2 = 0 (Este registro no debería cambiar)
+
+// --- 2. El Salto (Control Hazard) ---
+00108663  // @0008  beq  x1, x1, +12    ; Salto tomado (0 == 0). Salta a @0014
+
+// --- 3. Instrucciones Fantasma (Deberían ser eliminadas) ---
+06300113  // @000c  addi x2, x0, 99     ; HAZARD: Si no hay flush, se ejecuta
+00110113  // @0010  addi x2, x2, 1      ; HAZARD: Si no hay flush, x2 termina en 100
+
+// --- 4. Target del Salto ---
+00000193  // @0014  addi x3, x0, 0      ; TARGET. Instrucción inofensiva de llegada.
+
+// --- NOPs para drenar ---
+00000013  // @0018  nop
+00000013  // @001c  nop
+
+// --- 5. BANDERA DE ÉXITO ---
+06202623  // @0020  sw x2, 108(x0)      ; Guarda x2. 
+
+// --- 6. FRENO DE SEGURIDAD ---
+0000006f  // @0024  jal x0, 0           ; Bucle infinito
