@@ -1,22 +1,28 @@
 // =============================================================================
 // datapath.v  –  RISC-V 32-bit  Pipelined Datapath
-// Paso 1: Registro IF/ID introducido.
-// Paso 2: ID/EX propaga Rs1E, Rs2E. Outputs de hazard expuestos.
-// Fase B: ISA completo.
-//   Cambios:
-//   - ImmSrc ampliado a 3 bits (U-type para LUI)
-//   - NegE exportado al controller (para blt/bge)
-//   - ShiftArithE recibido del controller y pasado a la ALU
-//   - JalrE recibido del controller:
-//       jalr → PCTargetE = Rs1E + ImmExtE  (mux de SrcAE)
-//       jal  → PCTargetE = PCE  + ImmExtE  (comportamiento anterior)
-//   - LUI: ResultSrcW=11 → ImmExtW se propaga por EX/MEM y MEM/WB
-//          El mux de WB tiene 4 entradas (mux4):
-//            00 = ALUResult, 01 = ReadData, 10 = PC+4, 11 = ImmExt
 //
-// División de responsabilidades con el controller:
-//   - ZeroE y NegE salen del datapath al controller.
-//   - PCSrcE se calcula en el controller y regresa al datapath.
+// Entregable 2: Soporte para instrucciones comprimidas (Extensión C).
+//
+// Cambios respecto a la versión base (main):
+//   1. DESCOMPRESOR: Insertado en la etapa IF, entre la lectura de imem y
+//      el registro IF/ID. Traduce instrucciones de 16 bits a 32 bits.
+//
+//   2. PC VARIABLE: El incremento del PC ahora es +2 para instrucciones
+//      comprimidas y +4 para instrucciones estándar:
+//        - PCPlusIncF = PCF + (is_compressed ? 2 : 4)
+//        - "PCPlus4" renombrado a "PCPlusInc" en todo el pipeline.
+//
+//   3. DETECCIÓN: Una instrucción es comprimida si sus bits [1:0] != 2'b11.
+//      Esto se verifica ANTES de la descompresión (sobre InstrF directo).
+//
+// Señales que cambian nombre (pipeline completo):
+//   PCPlus4F  →  PCPlusIncF
+//   PCPlus4D  →  PCPlusIncD
+//   PCPlus4E  →  PCPlusIncE
+//   PCPlus4M  →  PCPlusIncM (registro interno)
+//   PCPlus4W  →  PCPlusIncW (registro interno)
+//
+// Todo lo demás (Hazard Unit, Controller, ALU) se mantiene igual.
 // =============================================================================
 module datapath(
     input  clk, reset,
@@ -33,8 +39,8 @@ module datapath(
     input  [1:0] ResultSrcE,
     input        JumpE,
     input        BranchE,
-    input        JalrE,        // NUEVO: 1=jalr (SrcAE = Rs1E), 0=jal (SrcAE = PCE)
-    input        ShiftArithE,  // NUEVO: 1=sra/srai (corrimiento aritmético)
+    input        JalrE,        // 1=jalr (SrcAE = Rs1E), 0=jal (SrcAE = PCE)
+    input        ShiftArithE,  // 1=sra/srai (corrimiento aritmético)
 
     // Etapa MEM (vienen del registro EX/MEM del controller)
     input        MemWriteM,
@@ -49,7 +55,7 @@ module datapath(
     // Interfaz con la Instruction Memory (etapa IF)
     // -------------------------------------------------------------------------
     output [31:0] PCF,      // PC actual → instruction memory
-    input  [31:0] InstrF,   // instrucción leída de imem
+    input  [31:0] InstrF,   // instrucción leída de imem (puede ser 16b en bits [15:0])
 
     // -------------------------------------------------------------------------
     // Campos de la instrucción decodificada → controller (etapa ID)
@@ -62,12 +68,12 @@ module datapath(
     // Flags de la ALU → controller para resolver branches (etapa EX)
     // -------------------------------------------------------------------------
     output       ZeroE,  // result == 0  (beq/bne)
-    output       NegE,   // result[31]   (blt/bge) ← NUEVO
+    output       NegE,   // result[31]   (blt/bge)
 
     // -------------------------------------------------------------------------
     // Selección del PC (calculado en el controller)
     // -------------------------------------------------------------------------
-    input        PCSrcE,    // 1 → salto tomado (PCTargetE), 0 → PC+4
+    input        PCSrcE,    // 1 → salto tomado (PCTargetE), 0 → PC+Inc
 
     // -------------------------------------------------------------------------
     // Interfaz con la Data Memory (etapa MEM)
@@ -78,7 +84,7 @@ module datapath(
     input  [31:0] ReadDataM,
 
     // -------------------------------------------------------------------------
-    // Outputs para la Hazard Unit (Paso 5)
+    // Outputs para la Hazard Unit
     // -------------------------------------------------------------------------
     output [4:0] Rs1D,
     output [4:0] Rs2D,
@@ -105,29 +111,73 @@ module datapath(
   // ETAPA IF – Instruction Fetch
   // ===========================================================================
   wire [31:0] PCNextF;
-  wire [31:0] PCPlus4F;
-  wire [31:0] PCTargetE;  // PC destino (calculado en EX)
+  wire [31:0] PCPlusIncF;    // ← RENOMBRADO: antes PCPlus4F
+  wire [31:0] PCTargetE;     // PC destino (calculado en EX)
 
-  // Registro del PC con soporte para Stall:
-  // Si StallF=1 el PC retiene su valor (congela la etapa IF).
+  // ---------------------------------------------------------------------------
+  // [NUEVO] Detección de instrucción comprimida
+  //
+  // Según la especificación RISC-V, una instrucción es de 32 bits si sus
+  // dos bits menos significativos son ambos 1 (bits[1:0] == 2'b11).
+  // Cualquier otro valor indica una instrucción comprimida de 16 bits.
+  // ---------------------------------------------------------------------------
+  wire is_compressed_f = (InstrF[1:0] != 2'b11);
+
+  // ---------------------------------------------------------------------------
+  // [NUEVO] Instanciación del Descompresor
+  //
+  // Toma los 16 bits inferiores de la lectura de imem y los traduce a 32 bits.
+  // La señal is_valid indica si la traducción fue exitosa (instrucción reconocida).
+  // ---------------------------------------------------------------------------
+  wire [31:0] instr_expanded;
+  wire        decomp_valid;
+
+  decompressor decomp(
+    .instr16       (InstrF[15:0]),
+    .instr32       (instr_expanded),
+    .is_compressed (decomp_valid)
+  );
+
+  // ---------------------------------------------------------------------------
+  // [NUEVO] Mux de selección de instrucción: comprimida vs. estándar
+  //
+  // Si la instrucción es comprimida (bits[1:0] != 11):
+  //   → Usa la versión expandida por el descompresor (32 bits equivalentes)
+  // Si la instrucción es estándar (bits[1:0] == 11):
+  //   → Usa la instrucción directa de imem (ya es de 32 bits)
+  // ---------------------------------------------------------------------------
+  wire [31:0] InstrF_final = is_compressed_f ? instr_expanded : InstrF;
+
+  // ---------------------------------------------------------------------------
+  // Registro del PC con soporte para Stall
+  // ---------------------------------------------------------------------------
   reg [31:0] PCF_r;
   assign PCF = PCF_r;
 
   always @(posedge clk or posedge reset) begin
     if (reset)        PCF_r <= 32'b0;
     else if (~StallF) PCF_r <= PCNextF;  // Solo avanza si no hay stall
-    // Si StallF=1: PCF_r retiene su valor sin cambiar
   end
 
-  adder pcadd4(
+  // ---------------------------------------------------------------------------
+  // [MODIFICADO] Sumador del PC con incremento variable
+  //
+  // En lugar de sumar siempre +4, el incremento depende del tamaño de la
+  // instrucción actual:
+  //   - Comprimida (16 bits): PC += 2
+  //   - Estándar   (32 bits): PC += 4
+  // ---------------------------------------------------------------------------
+  wire [31:0] pc_increment = is_compressed_f ? 32'd2 : 32'd4;
+
+  adder pcaddinc(
     .a (PCF),
-    .b (32'd4),
-    .y (PCPlus4F)
+    .b (pc_increment),
+    .y (PCPlusIncF)
   );
 
-  // PCSrcE=0 → ejecución normal (PC+4); PCSrcE=1 → salto tomado
+  // PCSrcE=0 → ejecución normal (PC+Inc); PCSrcE=1 → salto tomado
   mux2 #(WIDTH) pcmux(
-    .d0 (PCPlus4F),
+    .d0 (PCPlusIncF),
     .d1 (PCTargetE),
     .s  (PCSrcE),
     .y  (PCNextF)
@@ -135,22 +185,25 @@ module datapath(
 
   // ===========================================================================
   // REGISTRO INTERMEDIO  IF / ID
+  //
+  // Propaga la instrucción EXPANDIDA (no la cruda de imem) hacia la etapa ID.
+  // También propaga PCPlusInc (en lugar del antiguo PCPlus4).
   // ===========================================================================
   reg [31:0] InstrD;
   reg [31:0] PCD;
-  reg [31:0] PCPlus4D;
+  reg [31:0] PCPlusIncD;   // ← RENOMBRADO: antes PCPlus4D
 
   always @(posedge clk or posedge reset) begin
     if (reset || FlushD) begin
       // Reset normal O flush por salto tomado: inserta burbuja (NOP) en ID
-      InstrD   <= 32'b0;
-      PCD      <= 32'b0;
-      PCPlus4D <= 32'b0;
+      InstrD     <= 32'b0;
+      PCD        <= 32'b0;
+      PCPlusIncD <= 32'b0;
     end else if (~StallD) begin
       // Solo avanza si no hay stall de Load-Use
-      InstrD   <= InstrF;
-      PCD      <= PCF;
-      PCPlus4D <= PCPlus4F;
+      InstrD     <= InstrF_final;   // ← MODIFICADO: usa instrucción expandida
+      PCD        <= PCF;
+      PCPlusIncD <= PCPlusIncF;     // ← RENOMBRADO
     end
     // Si StallD=1 y no FlushD: registros retienen sus valores (pipeline congelado)
   end
@@ -193,7 +246,7 @@ module datapath(
   // Propaga datos y señales de hazard hacia la etapa EX.
   // También propaga ImmExtD para LUI (necesita llegar hasta WB).
   // ===========================================================================
-  reg [31:0] RD1E_r, RD2E_r, ImmExtE_r, PCE_r, PCPlus4E_r;
+  reg [31:0] RD1E_r, RD2E_r, ImmExtE_r, PCE_r, PCPlusIncE_r;
   reg [4:0]  RdE_r;
   reg [4:0]  Rs1E_r;
   reg [4:0]  Rs2E_r;
@@ -201,33 +254,33 @@ module datapath(
   always @(posedge clk or posedge reset) begin
     if (reset || FlushE) begin
       // Reset normal O flush: inserta burbuja (NOP) en EX
-      RD1E_r     <= 32'b0;
-      RD2E_r     <= 32'b0;
-      ImmExtE_r  <= 32'b0;
-      PCE_r      <= 32'b0;
-      PCPlus4E_r <= 32'b0;
-      RdE_r      <= 5'b0;
-      Rs1E_r     <= 5'b0;
-      Rs2E_r     <= 5'b0;
+      RD1E_r       <= 32'b0;
+      RD2E_r       <= 32'b0;
+      ImmExtE_r    <= 32'b0;
+      PCE_r        <= 32'b0;
+      PCPlusIncE_r <= 32'b0;
+      RdE_r        <= 5'b0;
+      Rs1E_r       <= 5'b0;
+      Rs2E_r       <= 5'b0;
     end else begin
-      RD1E_r     <= RD1D;
-      RD2E_r     <= RD2D;
-      ImmExtE_r  <= ImmExtD;
-      PCE_r      <= PCD;
-      PCPlus4E_r <= PCPlus4D;
-      RdE_r      <= InstrD[11:7];
-      Rs1E_r     <= InstrD[19:15];
-      Rs2E_r     <= InstrD[24:20];
+      RD1E_r       <= RD1D;
+      RD2E_r       <= RD2D;
+      ImmExtE_r    <= ImmExtD;
+      PCE_r        <= PCD;
+      PCPlusIncE_r <= PCPlusIncD;   // ← RENOMBRADO
+      RdE_r        <= InstrD[11:7];
+      Rs1E_r       <= InstrD[19:15];
+      Rs2E_r       <= InstrD[24:20];
     end
   end
 
   // Alias legibles
-  wire [31:0] RD1E, RD2E, ImmExtE, PCE, PCPlus4E;
-  assign RD1E     = RD1E_r;
-  assign RD2E     = RD2E_r;
-  assign ImmExtE  = ImmExtE_r;
-  assign PCE      = PCE_r;
-  assign PCPlus4E = PCPlus4E_r;
+  wire [31:0] RD1E, RD2E, ImmExtE, PCE, PCPlusIncE;
+  assign RD1E       = RD1E_r;
+  assign RD2E       = RD2E_r;
+  assign ImmExtE    = ImmExtE_r;
+  assign PCE        = PCE_r;
+  assign PCPlusIncE = PCPlusIncE_r;  // ← RENOMBRADO
 
   // Outputs de hazard
   assign Rs1D = InstrD[19:15];
@@ -241,19 +294,14 @@ module datapath(
   // ===========================================================================
 
   // -------------------------------------------------------------------------
-  // Mux SrcAE: entrada A de la ALU
-  //   JalrE=0 → PCE   (jal, branches B-type: dirección = PC + ImmExt)
-  //   JalrE=1 → RD1E  (jalr: dirección = Rs1 + ImmExt)
-  //   Nota: para instrucciones R-type e I-type ALU, SrcA siempre es RD1E
-  //         y JalrE nunca está activo, así que el mux solo afecta al cálculo
-  //         del PCTargetE.
-  // En el diseño de H&H el sumador del branch SIEMPRE suma PC+Imm para el
-  // target. Para jalr necesitamos Rs1+Imm. Usamos JalrE para seleccionar.
+  // Mux SrcAE: entrada A del sumador de branch/jump target
+  //   JalrE=0 → PCE   (jal, branches: target = PC + ImmExt)
+  //   JalrE=1 → RD1E  (jalr: target = Rs1 + ImmExt)
   // -------------------------------------------------------------------------
-  wire [31:0] SrcAE_branch; // fuente A del sumador de branch/jump target
+  wire [31:0] SrcAE_branch;
   mux2 #(WIDTH) srcamux_branch(
-    .d0 (PCE),    // jal: PC + ImmExt
-    .d1 (RD1E),   // jalr: Rs1 + ImmExt
+    .d0 (PCE),
+    .d1 (RD1E),
     .s  (JalrE),
     .y  (SrcAE_branch)
   );
@@ -309,13 +357,13 @@ module datapath(
   );
 
   alu alu(
-    .a          (SrcAE),       // Conectado al wire SrcAE para facilitar waveforms
+    .a          (SrcAE),
     .b          (SrcBE),
     .alucontrol (ALUControlE),
-    .ShiftArith (ShiftArithE), // NUEVO
+    .ShiftArith (ShiftArithE),
     .result     (ALUResultE),
-    .zero       (ZeroE),       // exportado al controller
-    .neg        (NegE)         // NUEVO: exportado al controller para blt/bge
+    .zero       (ZeroE),
+    .neg        (NegE)
   );
 
   // -------------------------------------------------------------------------
@@ -333,21 +381,21 @@ module datapath(
   // REGISTRO INTERMEDIO  EX / MEM
   // LUI: ImmExtE se propaga hacia MEM y WB para que ResultSrc=11 lo elija.
   // ===========================================================================
-  reg [31:0] ALUResultM_r, WriteDataM_r, PCPlus4M_r, ImmExtM_r;
+  reg [31:0] ALUResultM_r, WriteDataM_r, PCPlusIncM_r, ImmExtM_r;
   reg [4:0]  RdM_r;
 
   always @(posedge clk or posedge reset) begin
     if (reset) begin
       ALUResultM_r <= 32'b0;
       WriteDataM_r <= 32'b0;
-      PCPlus4M_r   <= 32'b0;
+      PCPlusIncM_r <= 32'b0;
       ImmExtM_r    <= 32'b0;
       RdM_r        <= 5'b0;
     end else begin
       ALUResultM_r <= ALUResultE;
-      WriteDataM_r <= WriteDataE;   // Usa WriteDataE (con forwarding) para 'sw'
-      PCPlus4M_r   <= PCPlus4E;
-      ImmExtM_r    <= ImmExtE;    // NUEVO: para LUI
+      WriteDataM_r <= WriteDataE;     // Usa WriteDataE (con forwarding) para 'sw'
+      PCPlusIncM_r <= PCPlusIncE;     // ← RENOMBRADO
+      ImmExtM_r    <= ImmExtE;
       RdM_r        <= RdE_r;
     end
   end
@@ -365,21 +413,21 @@ module datapath(
   // REGISTRO INTERMEDIO  MEM / WB
   // ImmExtM también se propaga para LUI.
   // ===========================================================================
-  reg [31:0] ALUResultW_r, ReadDataW_r, PCPlus4W_r, ImmExtW_r;
+  reg [31:0] ALUResultW_r, ReadDataW_r, PCPlusIncW_r, ImmExtW_r;
   reg [4:0]  RdW_r;
 
   always @(posedge clk or posedge reset) begin
     if (reset) begin
       ALUResultW_r <= 32'b0;
       ReadDataW_r  <= 32'b0;
-      PCPlus4W_r   <= 32'b0;
+      PCPlusIncW_r <= 32'b0;
       ImmExtW_r    <= 32'b0;
       RdW_r        <= 5'b0;
     end else begin
       ALUResultW_r <= ALUResultM_r;
       ReadDataW_r  <= ReadDataM;
-      PCPlus4W_r   <= PCPlus4M_r;
-      ImmExtW_r    <= ImmExtM_r;   // NUEVO: para LUI
+      PCPlusIncW_r <= PCPlusIncM_r;   // ← RENOMBRADO
+      ImmExtW_r    <= ImmExtM_r;
       RdW_r        <= RdM_r;
     end
   end
@@ -392,14 +440,14 @@ module datapath(
   // Mux4 para elegir el dato a escribir en el register file:
   //   ResultSrcW = 2'b00 → ALUResult  (R-type, I-type ALU)
   //   ResultSrcW = 2'b01 → ReadData   (lw)
-  //   ResultSrcW = 2'b10 → PC + 4     (jal, jalr → guarda dirección de retorno)
+  //   ResultSrcW = 2'b10 → PC + Inc   (jal, jalr → guarda dirección de retorno)
   //   ResultSrcW = 2'b11 → ImmExt     (lui → escribe el inmediato U-type)
   // ===========================================================================
   mux4 #(WIDTH) resultmux(
     .d0 (ALUResultW_r),
     .d1 (ReadDataW_r),
-    .d2 (PCPlus4W_r),
-    .d3 (ImmExtW_r),    // NUEVO: para LUI
+    .d2 (PCPlusIncW_r),   // ← RENOMBRADO: ahora guarda PC+2 o PC+4 correcto
+    .d3 (ImmExtW_r),
     .s  (ResultSrcW),
     .y  (ResultW)
   );

@@ -4,6 +4,12 @@ build/
 # Simulation output
 sim/sim.vcd
 sim/*.vcd
+sim/vcd/
+
+# Icarus Verilog / Simulación autogenerados
+*.vvp
+*.out
+*.rom
 
 # Vivado / Xilinx project files
 *.xpr
