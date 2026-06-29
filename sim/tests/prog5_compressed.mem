@@ -1,16 +1,51 @@
-// Program 5: Test de instrucciones comprimidas (Extension C)
+// Program 5: Test de instrucciones comprimidas (RVC Extension C)
+// =============================================================================
+// Entregable 2: Verifica las 10 instrucciones comprimidas del E2.
+//
+// Instrucciones probadas:
+//   c.lui, c.addi, c.slli, c.srli, c.srai,
+//   c.xor, c.and, c.or, c.sub, c.add
+//
 // Resultado esperado: mem[100] = 25 (0x00000019)
 //
-// Empaquetado: 2 instrucciones de 16 bits por palabra de 32 bits.
-//   bits[15:0]  -> instruccion en la direccion par (PC actual)
-//   bits[31:16] -> instruccion en la direccion +2
+// Flujo de ejecución detallado:
+// =============================================================================
+//
+//  PC   | Hex        | Instrucción(es)                          | Resultado
+// ------|------------|------------------------------------------|------------------
+//  0x00 | 14416405   | [PC=0] c.lui x8, 1                      | x8 = 0x00001000 (4096)
+//       |            | [PC=2] c.addi x8, -16                    | x8 = 4096-16 = 4080
+//  0x04 | 80210412   | [PC=4] c.slli x8, 4                     | x8 = 4080<<4 = 65280
+//       |            | [PC=6] c.srli x8, 8                      | x8 = 65280>>8 = 255
+//  0x08 | 00a00493   | [PC=8] addi x9, x0, 10                  | x9 = 10 (32-bit)
+//  0x0c | 8c258485   | [PC=12] c.srai x9, 1                    | x9 = 10>>>1 = 5
+//       |            | [PC=14] c.xor x8, x9                    | x8 = 255^5 = 250
+//  0x10 | 8c458c65   | [PC=16] c.and x8, x9                    | x8 = 250&5 = 0
+//       |            | [PC=18] c.or  x8, x9                    | x8 = 0|5 = 5
+//  0x14 | 04518c05   | [PC=20] c.sub x8, x9                    | x8 = 5-5 = 0
+//       |            | [PC=22] c.addi x8, 20                    | x8 = 0+20 = 20
+//  0x18 | 00019426   | [PC=24] c.add x8, x9                    | x8 = 20+5 = 25
+//       |            | [PC=26] c.nop                            | (nada)
+//  0x1c | 06802223   | [PC=28] sw x8, 100(x0)                  | mem[100] = 25 ✓
+//  0x20 | 0000006f   | [PC=32] jal x0, 0                       | Bucle infinito
+//
+// =============================================================================
+// Notas sobre el empaquetado en memoria:
+//   - Cada línea hex es una PALABRA de 32 bits almacenada en una dirección.
+//   - Las instrucciones comprimidas (16 bits) se empaquetan de a dos por palabra.
+//   - El half-word inferior (bits [15:0]) corresponde a la dirección par menor.
+//   - El half-word superior (bits [31:16]) corresponde a la dirección +2.
+//   - Ejemplo: "14416405" en la dirección 0x00:
+//       bits[15:0]  = 0x6405 → c.lui x8, 1        (PC = 0x00)
+//       bits[31:16] = 0x1441 → c.addi x8, -16     (PC = 0x02)
+// =============================================================================
 
-14416405  // c.lui x8, 1      -> x8 = 4096  |  c.addi x8, -16  -> x8 = 4080
-80210412  // c.slli x8, 4     -> x8 = 65280  |  c.srli x8, 8   -> x8 = 255
-00a00493  // addi x9, x0, 10  -> x9 = 10  (32 bits)
-8c258485  // c.srai x9, 1     -> x9 = 5    |  c.xor x8, x9    -> x8 = 250
-8c458c65  // c.and x8, x9     -> x8 = 0    |  c.or  x8, x9   -> x8 = 5
-04518c05  // c.sub x8, x9     -> x8 = 0    |  c.addi x8, 20  -> x8 = 20
-00019426  // c.add x8, x9     -> x8 = 25   |  c.nop
-06802223  // sw x8, 100(x0)   -> mem[100] = 25  (32 bits)
-0000006f  // jal x0, 0        -> bucle infinito  (32 bits)
+14416405  // @0000  [PC=0] c.lui x8, 1   ; [PC=2] c.addi x8, -16 (x8 = 4096-16 = 4080)
+80210412  // @0004  [PC=4] c.slli x8, 4  ; [PC=6] c.srli x8, 8   (x8 = (4080<<4)>>8 = 255)
+00a00493  // @0008  [PC=8] addi x9, x0, 10                       (x9 = 10, 32-bit)
+8c258485  // @000c  [PC=12] c.srai x9, 1  ; [PC=14] c.xor x8, x9 (x9 = 5; x8 = 255^5 = 250)
+8c458c65  // @0010  [PC=16] c.and x8, x9  ; [PC=18] c.or x8, x9  (x8 = 250&5 = 0; then x8 = 0|5 = 5)
+04518c05  // @0014  [PC=20] c.sub x8, x9  ; [PC=22] c.addi x8, 20 (x8 = 5-5 = 0; then x8 = 20)
+00019426  // @0018  [PC=24] c.add x8, x9  ; [PC=26] c.nop        (x8 = 20+5 = 25)
+06802223  // @001c  [PC=28] sw x8, 100(x0)                       (mem[100] = 25, 32-bit)
+0000006f  // @0020  [PC=32] jal x0, 0                            (Bucle infinito, 32-bit)
