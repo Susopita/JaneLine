@@ -35,8 +35,8 @@ module imem(input  [31:0] a,
           $display("Loading instruction memory from: %0s", mem_file);
           $readmemh(mem_file, RAM);
       end else begin
-          $display("Loading default instruction memory (prog6_fibonacci.mem)");
-          $readmemh("prog6_fibonacci.mem", RAM);
+          $display("Loading default instruction memory (prog6_fibonacci_32b.mem)");
+          $readmemh("prog6_fibonacci_32b.mem", RAM);
       end
   end
 
