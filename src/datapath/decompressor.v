@@ -1,37 +1,47 @@
 // =============================================================================
 // decompressor.v  –  Descompresor RVC (RISC-V Compressed Extension)
 //
-// Entregable 2: Traduce instrucciones de 16 bits (Extensión C) a sus
+// Entregable 3: Traduce instrucciones de 16 bits (Extensión C) a sus
 // equivalentes de 32 bits en RV32I.
 //
 // ┌─────────────────────────────────────────────────────────────────────┐
-// │  INSTRUCCIONES SOPORTADAS (10)                                     │
+// │  INSTRUCCIONES SOPORTADAS (20)                                      │
 // │                                                                     │
-// │  Cuadrante 1 (op = 2'b01):                                         │
-// │    1. c.addi   rd, imm       → addi rd, rd, imm       (CI-type)    │
-// │    2. c.lui    rd, nzimm     → lui  rd, nzimm          (CI-type)    │
-// │    3. c.srli   rd', shamt    → srli rd', rd', shamt    (CB-type)    │
-// │    4. c.srai   rd', shamt    → srai rd', rd', shamt    (CB-type)    │
-// │    5. c.sub    rd', rs2'     → sub  rd', rd', rs2'     (CA-type)    │
-// │    6. c.xor    rd', rs2'     → xor  rd', rd', rs2'     (CA-type)    │
-// │    7. c.or     rd', rs2'     → or   rd', rd', rs2'     (CA-type)    │
-// │    8. c.and    rd', rs2'     → and  rd', rd', rs2'     (CA-type)    │
+// │  Cuadrante 0 (op = 2'b00):                                          │
+// │    1. c.lw     rd', imm(rs1') → lw   rd', imm(rs1')    (CL-type)    │
+// │    2. c.sw     rs2', imm(rs1')→ sw   rs2', imm(rs1')   (CS-type)    │
 // │                                                                     │
-// │  Cuadrante 2 (op = 2'b10):                                         │
-// │    9. c.slli   rd, shamt     → slli rd, rd, shamt      (CI-type)    │
-// │   10. c.add    rd, rs2       → add  rd, rd, rs2        (CR-type)    │
+// │  Cuadrante 1 (op = 2'b01):                                          │
+// │    3. c.addi   rd, imm       → addi rd, rd, imm        (CI-type)    │
+// │    4. c.jal    imm           → jal  x1, imm            (CJ-type)    │
+// │    5. c.lui    rd, nzimm     → lui  rd, nzimm          (CI-type)    │
+// │    6. c.srli   rd', shamt    → srli rd', rd', shamt    (CB-type)    │
+// │    7. c.srai   rd', shamt    → srai rd', rd', shamt    (CB-type)    │
+// │    8. c.sub    rd', rs2'     → sub  rd', rd', rs2'     (CA-type)    │
+// │    9. c.xor    rd', rs2'     → xor  rd', rd', rs2'     (CA-type)    │
+// │   10. c.or     rd', rs2'     → or   rd', rd', rs2'     (CA-type)    │
+// │   11. c.and    rd', rs2'     → and  rd', rd', rs2'     (CA-type)    │
+// │   12. c.j      imm           → jal  x0, imm            (CJ-type)    │
+// │   13. c.beqz   rs1', imm     → beq  rs1', x0, imm      (CB-type)    │
+// │   14. c.bnez   rs1', imm     → bne  rs1', x0, imm      (CB-type)    │
+// │                                                                     │
+// │  Cuadrante 2 (op = 2'b10):                                          │
+// │   15. c.slli   rd, shamt     → slli rd, rd, shamt      (CI-type)    │
+// │   16. c.lwsp   rd, imm(sp)   → lw   rd, imm(x2)        (CI-type)    │
+// │   17. c.jr     rs1           → jalr x0, rs1, 0         (CR-type)    │
+// │   18. c.add    rd, rs2       → add  rd, rd, rs2        (CR-type)    │
+// │   19. c.jalr   rs1           → jalr x1, rs1, 0         (CR-type)    │
+// │   20. c.swsp   rs2, imm(sp)  → sw   rs2, imm(x2)       (CSS-type)   │
 // └─────────────────────────────────────────────────────────────────────┘
 //
 // Convención de registros comprimidos:
-//   - Los formatos CA/CB usan registros de 3 bits (instr[9:7] e instr[4:2])
+//   - Los formatos CA/CB/CL/CS usan registros de 3 bits (instr[9:7] e instr[4:2])
 //     que mapean al rango x8–x15: reg_completo = {2'b01, reg_3bit}
-//   - Los formatos CI/CR usan registros de 5 bits (instr[11:7], instr[6:2])
+//   - Los formatos CI/CR/CSS usan registros de 5 bits (instr[11:7], instr[6:2])
 //     que mapean directamente a x0–x31.
 //
-// Instrucciones NO soportadas en este entregable:
-//   - Loads/Stores  : c.lw, c.sw, c.lwsp, c.swsp
-//   - Branches/Jumps: c.beqz, c.bnez, c.j, c.jal, c.jr, c.jalr
-//   - Otros         : c.mv, c.andi, c.addi16sp, c.addi4spn
+// Instrucciones NO soportadas:
+//   - c.mv, c.andi, c.addi16sp, c.addi4spn
 //   → Cualquier instrucción no reconocida produce un NOP (addi x0, x0, 0).
 // =============================================================================
 module decompressor (
@@ -45,17 +55,17 @@ module decompressor (
   // ---------------------------------------------------------------------------
   wire [1:0]  op     = instr16[1:0];     // Cuadrante (00, 01, 10)
   wire [2:0]  funct3 = instr16[15:13];   // Sub-operación dentro del cuadrante
-  wire [3:0]  funct4 = instr16[15:12];   // Para c.add (Q2, funct3=100, bit12=1)
+  wire [3:0]  funct4 = instr16[15:12];   // Para c.add, c.jr, c.jalr
   wire [1:0]  funct2 = instr16[6:5];     // Sub-sub-op para CA-type (sub/xor/or/and)
 
   // ---------------------------------------------------------------------------
   // Mapeo de registros
   // ---------------------------------------------------------------------------
-  // Registros COMPLETOS (5 bits) – usados por CI-type y CR-type
+  // Registros COMPLETOS (5 bits) – usados por CI-type, CR-type, CSS-type
   wire [4:0]  rd  = instr16[11:7];   // Registro destino / fuente 1 (rd = rs1)
   wire [4:0]  rs2 = instr16[6:2];    // Registro fuente 2
 
-  // Registros COMPRIMIDOS (3 bits → 5 bits) – usados por CA-type y CB-type
+  // Registros COMPRIMIDOS (3 bits → 5 bits) – usados por CA-type, CB-type, CL-type, CS-type
   //   Bits [9:7] → rd'/rs1' (registros x8-x15)
   //   Bits [4:2] → rs2'     (registros x8-x15)
   wire [4:0]  rd_c  = {2'b01, instr16[9:7]};   // rd' / rs1'
@@ -65,16 +75,35 @@ module decompressor (
   // Reconstrucción de inmediatos
   // ---------------------------------------------------------------------------
   // c.addi: inmediato con signo de 6 bits → extensión a 12 bits
-  //   Bits: [12|6:2] → imm[5|4:0], con extensión de signo desde bit 5
+  //   Bits: [12|6:2] → imm[5|4:0]
   wire [11:0] imm_addi = {{6{instr16[12]}}, instr16[12], instr16[6:2]};
 
   // c.lui: inmediato con signo de 6 bits → extensión a 20 bits
-  //   Bits: [12|6:2] → nzimm[17|16:12], con extensión de signo desde bit 17
+  //   Bits: [12|6:2] → nzimm[17|16:12]
   wire [19:0] imm_lui = {{14{instr16[12]}}, instr16[12], instr16[6:2]};
 
   // c.slli/c.srli/c.srai: shift amount (sin signo, 5 bits)
-  //   En RV32C, el bit instr16[12] (shamt[5]) DEBE ser 0
   wire [4:0]  shamt = instr16[6:2];
+
+  // c.lw / c.sw: offset sin signo de 7 bits (múltiplo de 4) → extensión a 12 bits
+  //   Orden de bits en instr16: [5]=imm[6], [12:10]=imm[5:3], [6]=imm[2]
+  wire [11:0] imm_lw_sw = {5'b00000, instr16[5], instr16[12:10], instr16[6], 2'b00};
+
+  // c.lwsp: offset sin signo de 8 bits (múltiplo de 4) → extensión a 12 bits
+  //   Orden de bits en instr16: [3:2]=imm[7:6], [12]=imm[5], [6:4]=imm[4:2]
+  wire [11:0] imm_lwsp = {4'b0000, instr16[3:2], instr16[12], instr16[6:4], 2'b00};
+
+  // c.swsp: offset sin signo de 8 bits (múltiplo de 4) → extensión a 12 bits
+  //   Orden de bits en instr16: [8:7]=imm[7:6], [12:9]=imm[5:2]
+  wire [11:0] imm_swsp = {4'b0000, instr16[8:7], instr16[12:9], 2'b00};
+
+  // c.beqz / c.bnez: offset con signo de 9 bits (múltiplo de 2) → representamos bits [12:1] en 12 bits
+  //   Orden de bits en instr16: [12]=imm[8], [6:5]=imm[7:6], [2]=imm[5], [11:10]=imm[4:3], [4:3]=imm[2:1]
+  wire [11:0] imm_b = {{4{instr16[12]}}, instr16[12], instr16[6:5], instr16[2], instr16[11:10], instr16[4:3]};
+
+  // c.j / c.jal: offset con signo de 12 bits (múltiplo de 2) → representamos bits [20:1] en 20 bits
+  //   Orden de bits en instr16: [12]=imm[11], [8]=imm[10], [10:9]=imm[9:8], [6]=imm[7], [7]=imm[6], [2]=imm[5], [11]=imm[4], [5:3]=imm[3:1]
+  wire [19:0] imm_j = {{9{instr16[12]}}, instr16[12], instr16[8], instr16[10:9], instr16[6], instr16[7], instr16[2], instr16[11], instr16[5:3]};
 
   // ---------------------------------------------------------------------------
   // Lógica de decodificación combinacional
@@ -89,17 +118,47 @@ module decompressor (
 
     case (op)
       // =====================================================================
+      // CUADRANTE 0 (op = 2'b00)
+      // Contiene: c.lw, c.sw
+      // =====================================================================
+      2'b00: begin
+        case (funct3)
+          // -----------------------------------------------------------------
+          // c.lw rd', imm(rs1')
+          //   Expansión: lw rd', imm(rs1')
+          //   Formato 32b I-type: {imm[11:0], rs1, 3'b010, rd, 7'b0000011}
+          // -----------------------------------------------------------------
+          3'b010: begin
+            dec_instr = {imm_lw_sw, rd_c, 3'b010, rs2_c, 7'b0000011};
+            dec_valid = 1'b1;
+          end
+
+          // -----------------------------------------------------------------
+          // c.sw rs2', imm(rs1')
+          //   Expansión: sw rs2', imm(rs1')
+          //   Formato 32b S-type: {imm[11:5], rs2, rs1, 3'b010, imm[4:0], 7'b0100011}
+          // -----------------------------------------------------------------
+          3'b110: begin
+            dec_instr = {imm_lw_sw[11:5], rs2_c, rd_c, 3'b010, imm_lw_sw[4:0], 7'b0100011};
+            dec_valid = 1'b1;
+          end
+
+          default: begin
+            dec_instr = 32'h00000013;
+            dec_valid = 1'b0;
+          end
+        endcase
+      end
+
+      // =====================================================================
       // CUADRANTE 1 (op = 2'b01)
-      // Contiene: c.addi, c.lui, c.srli, c.srai, c.sub, c.xor, c.or, c.and
+      // Contiene: c.addi, c.jal, c.lui, c.srli, c.srai, c.sub, c.xor, c.or, c.and, c.j, c.beqz, c.bnez
       // =====================================================================
       2'b01: begin
         case (funct3)
           // -----------------------------------------------------------------
           // c.addi rd, nzimm
-          //   Codificación: [15:13]=000  [12]=imm[5]  [11:7]=rd  [6:2]=imm[4:0]  [1:0]=01
-          //   Expansión:    addi rd, rd, sext(imm)
-          //   Formato 32b:  {imm[11:0], rs1, 3'b000, rd, 7'b0010011}
-          //   Nota: c.nop es c.addi x0, 0 (caso especial, produce NOP natural)
+          //   Expansión: addi rd, rd, sext(imm)
           // -----------------------------------------------------------------
           3'b000: begin
             dec_instr = {imm_addi, rd, 3'b000, rd, 7'b0010011};
@@ -107,11 +166,18 @@ module decompressor (
           end
 
           // -----------------------------------------------------------------
+          // c.jal imm (RV32C only)
+          //   Expansión: jal x1, imm
+          //   Formato 32b J-type: {imm[20], imm[10:1], imm[11], imm[19:12], rd, 7'b1101111}
+          // -----------------------------------------------------------------
+          3'b001: begin
+            dec_instr = {imm_j[19], imm_j[9:0], imm_j[10], imm_j[18:11], 5'd1, 7'b1101111};
+            dec_valid = 1'b1;
+          end
+
+          // -----------------------------------------------------------------
           // c.lui rd, nzimm
-          //   Codificación: [15:13]=011  [12]=nzimm[17]  [11:7]=rd  [6:2]=nzimm[16:12]  [1:0]=01
-          //   Expansión:    lui rd, sext(nzimm)
-          //   Formato 32b:  {imm[19:0], rd, 7'b0110111}
-          //   Restricción:  rd ≠ x0, rd ≠ x2 (x2 = sp, eso sería c.addi16sp)
+          //   Expansión: lui rd, sext(nzimm)
           // -----------------------------------------------------------------
           3'b011: begin
             if (rd != 5'd0 && rd != 5'd2) begin
@@ -122,78 +188,50 @@ module decompressor (
 
           // -----------------------------------------------------------------
           // funct3 = 100: Shifts y operaciones registro-registro (CA-format)
-          //   Selección por instr16[11:10]:
-          //     2'b00 → c.srli    2'b01 → c.srai
-          //     2'b11 → sub-ops seleccionadas por instr16[6:5] (funct2)
           // -----------------------------------------------------------------
           3'b100: begin
             case (instr16[11:10])
-              // -------------------------------------------------------------
               // c.srli rd', shamt
-              //   Codificación: [15:13]=100  [12]=0  [11:10]=00  [9:7]=rd'  [6:2]=shamt  [1:0]=01
-              //   Expansión:    srli rd', rd', shamt
-              //   Formato 32b:  {7'b0000000, shamt, rs1, 3'b101, rd, 7'b0010011}
-              // -------------------------------------------------------------
               2'b00: begin
-                if (instr16[12] == 1'b0) begin  // RV32C: shamt[5] debe ser 0
+                if (instr16[12] == 1'b0) begin
                   dec_instr = {7'b0000000, shamt, rd_c, 3'b101, rd_c, 7'b0010011};
                   dec_valid = 1'b1;
                 end
               end
 
-              // -------------------------------------------------------------
               // c.srai rd', shamt
-              //   Codificación: [15:13]=100  [12]=0  [11:10]=01  [9:7]=rd'  [6:2]=shamt  [1:0]=01
-              //   Expansión:    srai rd', rd', shamt
-              //   Formato 32b:  {7'b0100000, shamt, rs1, 3'b101, rd, 7'b0010011}
-              //   Nota: funct7=0100000 distingue srai de srli
-              // -------------------------------------------------------------
               2'b01: begin
-                if (instr16[12] == 1'b0) begin  // RV32C: shamt[5] debe ser 0
+                if (instr16[12] == 1'b0) begin
                   dec_instr = {7'b0100000, shamt, rd_c, 3'b101, rd_c, 7'b0010011};
                   dec_valid = 1'b1;
                 end
               end
 
-              // -------------------------------------------------------------
               // Operaciones registro-registro (CA-format)
-              //   Codificación común: [15:10]=100011  [9:7]=rd'/rs1'  [6:5]=funct2  [4:2]=rs2'  [1:0]=01
-              //   funct2 selecciona la operación:
-              //     00 → c.sub    01 → c.xor    10 → c.or    11 → c.and
-              // -------------------------------------------------------------
               2'b11: begin
                 case (funct2)
-                  // c.sub rd', rs2' → sub rd', rd', rs2'
-                  //   Formato 32b: {7'b0100000, rs2, rs1, 3'b000, rd, 7'b0110011}
+                  // c.sub rd', rs2'
                   2'b00: begin
                     dec_instr = {7'b0100000, rs2_c, rd_c, 3'b000, rd_c, 7'b0110011};
                     dec_valid = 1'b1;
                   end
-
-                  // c.xor rd', rs2' → xor rd', rd', rs2'
-                  //   Formato 32b: {7'b0000000, rs2, rs1, 3'b100, rd, 7'b0110011}
+                  // c.xor rd', rs2'
                   2'b01: begin
                     dec_instr = {7'b0000000, rs2_c, rd_c, 3'b100, rd_c, 7'b0110011};
                     dec_valid = 1'b1;
                   end
-
-                  // c.or rd', rs2' → or rd', rd', rs2'
-                  //   Formato 32b: {7'b0000000, rs2, rs1, 3'b110, rd, 7'b0110011}
+                  // c.or rd', rs2'
                   2'b10: begin
                     dec_instr = {7'b0000000, rs2_c, rd_c, 3'b110, rd_c, 7'b0110011};
                     dec_valid = 1'b1;
                   end
-
-                  // c.and rd', rs2' → and rd', rd', rs2'
-                  //   Formato 32b: {7'b0000000, rs2, rs1, 3'b111, rd, 7'b0110011}
+                  // c.and rd', rs2'
                   2'b11: begin
                     dec_instr = {7'b0000000, rs2_c, rd_c, 3'b111, rd_c, 7'b0110011};
                     dec_valid = 1'b1;
                   end
                 endcase
               end
-
-              // 2'b10 = c.andi (NO soportada en E2) → NOP
               default: begin
                 dec_instr = 32'h00000013;
                 dec_valid = 1'b0;
@@ -201,7 +239,35 @@ module decompressor (
             endcase
           end
 
-          // funct3 no reconocido en Q1 → NOP
+          // -----------------------------------------------------------------
+          // c.j imm
+          //   Expansión: jal x0, imm
+          //   Formato 32b J-type: {imm[20], imm[10:1], imm[11], imm[19:12], rd, 7'b1101111}
+          // -----------------------------------------------------------------
+          3'b101: begin
+            dec_instr = {imm_j[19], imm_j[9:0], imm_j[10], imm_j[18:11], 5'd0, 7'b1101111};
+            dec_valid = 1'b1;
+          end
+
+          // -----------------------------------------------------------------
+          // c.beqz rs1', imm
+          //   Expansión: beq rs1', x0, imm
+          //   Formato 32b B-type: {imm[12], imm[10:5], rs2, rs1, 3'b000, imm[4:1], imm[11], 7'b1100011}
+          // -----------------------------------------------------------------
+          3'b110: begin
+            dec_instr = {imm_b[11], imm_b[9:4], 5'd0, rd_c, 3'b000, imm_b[3:0], imm_b[10], 7'b1100011};
+            dec_valid = 1'b1;
+          end
+
+          // -----------------------------------------------------------------
+          // c.bnez rs1', imm
+          //   Expansión: bne rs1', x0, imm
+          // -----------------------------------------------------------------
+          3'b111: begin
+            dec_instr = {imm_b[11], imm_b[9:4], 5'd0, rd_c, 3'b001, imm_b[3:0], imm_b[10], 7'b1100011};
+            dec_valid = 1'b1;
+          end
+
           default: begin
             dec_instr = 32'h00000013;
             dec_valid = 1'b0;
@@ -211,41 +277,65 @@ module decompressor (
 
       // =====================================================================
       // CUADRANTE 2 (op = 2'b10)
-      // Contiene: c.slli, c.add
+      // Contiene: c.slli, c.lwsp, c.jr, c.add, c.jalr, c.swsp
       // =====================================================================
       2'b10: begin
         case (funct3)
           // -----------------------------------------------------------------
           // c.slli rd, shamt
-          //   Codificación: [15:13]=000  [12]=0  [11:7]=rd  [6:2]=shamt  [1:0]=10
-          //   Expansión:    slli rd, rd, shamt
-          //   Formato 32b:  {7'b0000000, shamt, rs1, 3'b001, rd, 7'b0010011}
-          //   Restricción:  rd ≠ x0 (HINT si rd=0, lo ignoramos como NOP)
+          //   Expansión: slli rd, rd, shamt
           // -----------------------------------------------------------------
           3'b000: begin
-            if (instr16[12] == 1'b0) begin  // RV32C: shamt[5] debe ser 0
+            if (instr16[12] == 1'b0) begin
               dec_instr = {7'b0000000, shamt, rd, 3'b001, rd, 7'b0010011};
               dec_valid = 1'b1;
             end
           end
 
           // -----------------------------------------------------------------
-          // c.add rd, rs2
-          //   Codificación: [15:12]=1001  [11:7]=rd  [6:2]=rs2  [1:0]=10
-          //   Expansión:    add rd, rd, rs2
-          //   Formato 32b:  {7'b0000000, rs2, rs1, 3'b000, rd, 7'b0110011}
-          //   Restricción:  rd ≠ x0, rs2 ≠ x0
-          //   Nota: bit12=1 distingue c.add (funct4=1001) de c.mv (funct4=1000)
-          //         c.mv NO está soportada en este entregable.
+          // c.lwsp rd, imm(sp)
+          //   Expansión: lw rd, imm(x2)
+          //   Restricción: rd ≠ x0
           // -----------------------------------------------------------------
-          3'b100: begin
-            if (funct4 == 4'b1001 && rd != 5'd0 && rs2 != 5'd0) begin
-              dec_instr = {7'b0000000, rs2, rd, 3'b000, rd, 7'b0110011};
+          3'b010: begin
+            if (rd != 5'd0) begin
+              dec_instr = {imm_lwsp, 5'd2, 3'b010, rd, 7'b0000011};
               dec_valid = 1'b1;
             end
           end
 
-          // funct3 no reconocido en Q2 → NOP
+          // -----------------------------------------------------------------
+          // c.jr rs1 / c.jalr rs1 / c.add rd, rs2
+          //   Diferenciados por el bit 12 y rs2
+          // -----------------------------------------------------------------
+          3'b100: begin
+            if (instr16[12] == 1'b0 && rd != 5'd0 && rs2 == 5'd0) begin
+              // c.jr rs1 → jalr x0, rs1, 0
+              dec_instr = {12'b0, rd, 3'b000, 5'd0, 7'b1100111};
+              dec_valid = 1'b1;
+            end
+            else if (instr16[12] == 1'b1 && rd != 5'd0 && rs2 == 5'd0) begin
+              // c.jalr rs1 → jalr x1, rs1, 0
+              dec_instr = {12'b0, rd, 3'b000, 5'd1, 7'b1100111};
+              dec_valid = 1'b1;
+            end
+            else if (instr16[12] == 1'b1 && rd != 5'd0 && rs2 != 5'd0) begin
+              // c.add rd, rs2 → add rd, rd, rs2
+              dec_instr = {7'b0000000, rs2, rd, 3'b000, rd, 7'b0110011};
+              dec_valid = 1'b1;
+            end
+            // c.mv (bit12=0, rs2!=0) no está soportada
+          end
+
+          // -----------------------------------------------------------------
+          // c.swsp rs2, imm(sp)
+          //   Expansión: sw rs2, imm(x2)
+          // -----------------------------------------------------------------
+          3'b110: begin
+            dec_instr = {imm_swsp[11:5], rs2, 5'd2, 3'b010, imm_swsp[4:0], 7'b0100011};
+            dec_valid = 1'b1;
+          end
+
           default: begin
             dec_instr = 32'h00000013;
             dec_valid = 1'b0;
@@ -254,9 +344,8 @@ module decompressor (
       end
 
       // =====================================================================
-      // CUADRANTE 0 (op = 2'b00) y CUADRANTE 3 (op = 2'b11)
-      // Q0: c.lw, c.sw (NO soportadas en E2)
-      // Q3: Instrucciones de 32 bits (nunca llegan aquí)
+      // CUADRANTE 3 (op = 2'b11)
+      // Instrucciones de 32 bits (nunca llegan aquí)
       // =====================================================================
       default: begin
         dec_instr = 32'h00000013;
