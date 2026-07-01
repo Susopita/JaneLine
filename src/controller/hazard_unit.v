@@ -1,28 +1,5 @@
-// =============================================================================
-// hazard_unit.v  –  Unidad de Riesgos (Hazard Unit)
-// Procesador RISC-V 32-bit Pipelined – Harris & Harris
-//
-// Responsabilidades:
-//   1. FORWARDING  : Detecta dependencias RAW y adelanta datos desde las
-//                   etapas MEM o WB hacia las entradas de la ALU en EX,
-//                   evitando tener que detener el pipeline innecesariamente.
-//
-//   2. STALLING    : Detecta el riesgo Load-Use (una instrucción lw seguida
-//                   de una instrucción que usa su resultado en el ciclo
-//                   siguiente). Detiene IF e ID por un ciclo e inserta
-//                   una burbuja en EX.
-//
-//   3. FLUSHING    : Detecta saltos tomados (branches y jumps). Descarta
-//                   las instrucciones que entraron erróneamente a las
-//                   etapas IF e ID insertando burbujas en D y en E.
-//
-// Toggle de pruebas:
-//   Compilar con -DDISABLE_HAZARD_UNIT para desactivar TODA la lógica de
-//   hazard (forwarding, stalling, flushing). Útil para pruebas unitarias
-//   donde se quiere verificar la ejecución sin dependencias de datos.
-//
-// Toda la lógica es COMBINACIONAL (sin registros internos).
-// =============================================================================
+// hazard_unit.v - Unidad de Riesgos (Hazard Unit)
+// Funciones: Forwarding, Stalling, Flushing
 module hazard_unit(
     // -------------------------------------------------------------------------
     // Entradas desde la etapa ID
@@ -73,31 +50,10 @@ module hazard_unit(
     output FlushE               // Limpia el registro ID/EX  (borra la instrucción en EX)
 );
 
-// =============================================================================
-// TOGGLE: Compilar con  -DDISABLE_HAZARD_UNIT  para desactivar la Hazard Unit.
-//
-// Ejemplo con iverilog:
-//   iverilog -DDISABLE_HAZARD_UNIT -o sim.out ...
-//
-// Cuando está desactivada, todas las salidas se fijan en sus valores neutros:
-//   - ForwardAE/ForwardBE = 00 (sin forwarding)
-//   - StallF/StallD = 0        (sin stalls)
-//   - FlushD/FlushE = 0        (sin flushes)
-//
-// Esto permite probar programas donde las instrucciones NO tienen dependencias
-// de datos entre ellas (e.g., tests unitarios de instrucciones individuales).
-// =============================================================================
+// Toggle: -DDISABLE_HAZARD_UNIT para pruebas sin hazards
 `ifndef DISABLE_HAZARD_UNIT
 
-  // ===========================================================================
-  // 1. FORWARDING – Adelantamiento de datos (Data Hazards RAW)
-  //
-  // Previene que la ALU lea un valor desactualizado del register file cuando
-  // una instrucción posterior necesita el resultado de una instrucción que aún
-  // no ha llegado a la etapa WB.
-  //
-  // Prioridad: MEM (más reciente) tiene precedencia sobre WB (más antigua).
-  // ===========================================================================
+  // 1. FORWARDING (Data Hazards RAW)
   always @(*) begin
 
     // --- Forwarding para la entrada A de la ALU (Rs1E) ---
@@ -118,18 +74,7 @@ module hazard_unit(
 
   end
 
-  // ===========================================================================
-  // 2. STALLING – Detección del riesgo Load-Use
-  //
-  // Cuando una instrucción 'lw' está en la etapa EX y la instrucción siguiente
-  // (en ID) necesita el dato que aún está siendo leído de memoria, el forwarding
-  // no es suficiente. Es necesario detener el pipeline 1 ciclo e insertar una
-  // burbuja en EX.
-  //
-  // Condición: la instrucción en EX es un load (ResultSrcE0=1) y su registro
-  // destino (RdE) coincide con alguno de los registros fuente de la instrucción
-  // en ID (Rs1D o Rs2D). Se excluye x0 porque escribir en x0 no tiene efecto.
-  // ===========================================================================
+  // 2. STALLING (Load-Use Hazard)
   wire lwStall;
   assign lwStall = ResultSrcE0 & ((RdE == Rs1D) | (RdE == Rs2D));
 
@@ -140,17 +85,7 @@ module hazard_unit(
   assign StallF = lwStall;
   assign StallD = lwStall;
 
-  // ===========================================================================
-  // 3. FLUSHING – Limpieza por saltos tomados (Control Hazards)
-  //
-  // El procesador asume que los saltos no se toman (predict-not-taken). Cuando
-  // un branch o jump SÍ se toma (PCSrcE=1 en la etapa EX), las instrucciones
-  // que entraron erróneamente a IF e ID deben descartarse.
-  //
-  // Si ocurre un Load-Use stall simultáneamente con un salto tomado, FlushE
-  // sigue siendo 1 (el OR garantiza esto), lo que tiene sentido porque tanto
-  // el stall como el flush quieren insertar un NOP en EX.
-  // ===========================================================================
+  // 3. FLUSHING (Control Hazards)
 
   // FlushD: descarta la instrucción actualmente en la etapa ID
   //   (la que entró erróneamente mientras se calculaba el target del salto)
@@ -162,17 +97,7 @@ module hazard_unit(
   assign FlushE = PCSrcE | lwStall;
 
 `else
-  // ===========================================================================
-  // HAZARD UNIT DESACTIVADA (modo de prueba)
-  //
-  // Todas las salidas fijadas a valores neutros:
-  //   - Sin forwarding → la ALU siempre lee del register file
-  //   - Sin stalls     → el pipeline nunca se congela
-  //   - Sin flushes    → nunca se insertan burbujas
-  //
-  // ¡IMPORTANTE! Solo usar con programas que NO tengan dependencias de datos
-  // entre instrucciones consecutivas (separar con NOPs si es necesario).
-  // ===========================================================================
+  // HAZARD UNIT DESACTIVADA
   always @(*) begin
     ForwardAE = 2'b00;
     ForwardBE = 2'b00;

@@ -1,26 +1,4 @@
-// =============================================================================
-// maindec.v  –  Decodificador Principal RISC-V 32-bit
-// Fase B: ISA completo.
-//
-// Señales de control generadas (13 bits total):
-//   RegWrite : escribe en el register file
-//   ImmSrc   : [2:0] tipo de inmediato (3 bits para cubrir U-type)
-//              000 = I-type   001 = S-type   010 = B-type
-//              011 = J-type   100 = U-type
-//   ALUSrc   : 0 = Rs2, 1 = ImmExt
-//   MemWrite : escribe en la memoria de datos
-//   ResultSrc: [1:0] selector del mux de WB
-//              00 = ALUResult  01 = ReadData  10 = PC+4  11 = ImmExt(LUI)
-//   Branch   : instrucción de salto condicional (B-type)
-//   ALUOp    : [1:0] guía al aludec
-//              00 = ADD  01 = SUB  10 = usa funct3/funct7  11 = pasa-b (LUI)
-//   Jump     : salto incondicional (jal o jalr)
-//   JalrSrc  : 1 = jalr (PCTarget = Rs1+Imm), 0 = jal (PCTarget = PC+Imm)
-//
-// Total bits del vector "controls":
-//   RegWrite(1) + ImmSrc(3) + ALUSrc(1) + MemWrite(1) +
-//   ResultSrc(2) + Branch(1) + ALUOp(2) + Jump(1) + JalrSrc(1) = 13 bits
-// =============================================================================
+// maindec.v - Decodificador Principal RISC-V 32-bit
 module maindec(
     input  [6:0] op,
     output        RegWrite,
@@ -31,7 +9,7 @@ module maindec(
     output        Branch,
     output [1:0]  ALUOp,
     output        Jump,
-    output        JalrSrc      // NUEVO: 1 = jalr (target = Rs1+Imm)
+    output        JalrSrc      // 1 = jalr (target = Rs1+Imm)
 );
 
   reg [12:0] controls;
@@ -41,10 +19,7 @@ module maindec(
           ResultSrc, Branch, ALUOp, Jump, JalrSrc} = controls;
 
   always @* case (op)
-    // -------------------------------------------------------------------------
-    // Formato del vector (13 bits):
-    // RegWrite_ImmSrc(3b)_ALUSrc_MemWrite_ResultSrc(2b)_Branch_ALUOp(2b)_Jump_JalrSrc
-    // -------------------------------------------------------------------------
+    // Formato del vector (13 bits): RegWrite_ImmSrc(3b)_ALUSrc_MemWrite_ResultSrc(2b)_Branch_ALUOp(2b)_Jump_JalrSrc
 
     // lw: load word — I-type
     //   RegWrite=1, ImmSrc=000(I), ALUSrc=1, MemWrite=0,

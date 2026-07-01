@@ -1,35 +1,7 @@
-// =============================================================================
 // datapath.v  –  RISC-V 32-bit  Pipelined Datapath
-//
-// Entregable 2: Soporte para instrucciones comprimidas (Extensión C).
-//
-// Cambios respecto a la versión base (main):
-//   1. DESCOMPRESOR: Insertado en la etapa IF, entre la lectura de imem y
-//      el registro IF/ID. Traduce instrucciones de 16 bits a 32 bits.
-//
-//   2. PC VARIABLE: El incremento del PC ahora es +2 para instrucciones
-//      comprimidas y +4 para instrucciones estándar:
-//        - PCPlusIncF = PCF + (is_compressed ? 2 : 4)
-//        - "PCPlus4" renombrado a "PCPlusInc" en todo el pipeline.
-//
-//   3. DETECCIÓN: Una instrucción es comprimida si sus bits [1:0] != 2'b11.
-//      Esto se verifica ANTES de la descompresión (sobre InstrF directo).
-//
-// Señales que cambian nombre (pipeline completo):
-//   PCPlus4F  →  PCPlusIncF
-//   PCPlus4D  →  PCPlusIncD
-//   PCPlus4E  →  PCPlusIncE
-//   PCPlus4M  →  PCPlusIncM (registro interno)
-//   PCPlus4W  →  PCPlusIncW (registro interno)
-//
-// Todo lo demás (Hazard Unit, Controller, ALU) se mantiene igual.
-// =============================================================================
 module datapath(
     input  clk, reset,
-
-    // -------------------------------------------------------------------------
-    // Señales de control desde el controller
-    // -------------------------------------------------------------------------
+  // Señales de control desde el controller
     // Etapa ID (combinacional, no pasa por registro)
     input  [2:0] ImmSrc,    // AMPLIADO a 3 bits (U-type)
 
@@ -50,42 +22,24 @@ module datapath(
     // Etapa WB (vienen del registro MEM/WB del controller)
     input        RegWriteW,
     input  [1:0] ResultSrcW,
-
-    // -------------------------------------------------------------------------
-    // Interfaz con la Instruction Memory (etapa IF)
-    // -------------------------------------------------------------------------
+  // Interfaz con la Instruction Memory (etapa IF)
     output [31:0] PCF,      // PC actual → instruction memory
     input  [31:0] InstrF,   // instrucción leída de imem (puede ser 16b en bits [15:0])
-
-    // -------------------------------------------------------------------------
-    // Campos de la instrucción decodificada → controller (etapa ID)
-    // -------------------------------------------------------------------------
+  // Campos de la instrucción decodificada → controller (etapa ID)
     output [6:0] OpD,
     output [2:0] Funct3D,
     output       Funct7b5D,
-
-    // -------------------------------------------------------------------------
-    // Flags de la ALU → controller para resolver branches (etapa EX)
-    // -------------------------------------------------------------------------
+  // Flags de la ALU → controller para resolver branches (etapa EX)
     output       ZeroE,  // result == 0  (beq/bne)
     output       NegE,   // result[31]   (blt/bge)
-
-    // -------------------------------------------------------------------------
-    // Selección del PC (calculado en el controller)
-    // -------------------------------------------------------------------------
+  // Selección del PC (calculado en el controller)
     input        PCSrcE,    // 1 → salto tomado (PCTargetE), 0 → PC+Inc
-
-    // -------------------------------------------------------------------------
-    // Interfaz con la Data Memory (etapa MEM)
-    // -------------------------------------------------------------------------
+  // Interfaz con la Data Memory (etapa MEM)
     output [31:0] ALUResultM,
     output [31:0] WriteDataM,
     output        MemWriteM_out,
     input  [31:0] ReadDataM,
-
-    // -------------------------------------------------------------------------
-    // Outputs para la Hazard Unit
-    // -------------------------------------------------------------------------
+  // Outputs para la Hazard Unit
     output [4:0] Rs1D,
     output [4:0] Rs2D,
     output [4:0] Rs1E,
@@ -93,10 +47,7 @@ module datapath(
     output [4:0] RdE,
     output [4:0] RdM,
     output [4:0] RdW,
-
-    // -------------------------------------------------------------------------
-    // Entradas desde la Hazard Unit
-    // -------------------------------------------------------------------------
+  // Entradas desde la Hazard Unit
     input        StallF,       // 1 → congela el PC (IF no avanza)
     input        StallD,       // 1 → congela el registro IF/ID (ID no avanza)
     input        FlushD,       // 1 → limpia el registro IF/ID (burbuja en ID)
@@ -106,29 +57,13 @@ module datapath(
 );
 
   localparam WIDTH = 32;
-
-  // ===========================================================================
   // ETAPA IF – Instruction Fetch
-  // ===========================================================================
   wire [31:0] PCNextF;
   wire [31:0] PCPlusIncF;    // ← RENOMBRADO: antes PCPlus4F
   wire [31:0] PCTargetE;     // PC destino (calculado en EX)
-
-  // ---------------------------------------------------------------------------
   // [NUEVO] Detección de instrucción comprimida
-  //
-  // Según la especificación RISC-V, una instrucción es de 32 bits si sus
-  // dos bits menos significativos son ambos 1 (bits[1:0] == 2'b11).
-  // Cualquier otro valor indica una instrucción comprimida de 16 bits.
-  // ---------------------------------------------------------------------------
   wire is_compressed_f = (InstrF[1:0] != 2'b11);
-
-  // ---------------------------------------------------------------------------
   // [NUEVO] Instanciación del Descompresor
-  //
-  // Toma los 16 bits inferiores de la lectura de imem y los traduce a 32 bits.
-  // La señal is_valid indica si la traducción fue exitosa (instrucción reconocida).
-  // ---------------------------------------------------------------------------
   wire [31:0] instr_expanded;
   wire        decomp_valid;
 
@@ -137,20 +72,9 @@ module datapath(
     .instr32       (instr_expanded),
     .is_compressed (decomp_valid)
   );
-
-  // ---------------------------------------------------------------------------
   // [NUEVO] Mux de selección de instrucción: comprimida vs. estándar
-  //
-  // Si la instrucción es comprimida (bits[1:0] != 11):
-  //   → Usa la versión expandida por el descompresor (32 bits equivalentes)
-  // Si la instrucción es estándar (bits[1:0] == 11):
-  //   → Usa la instrucción directa de imem (ya es de 32 bits)
-  // ---------------------------------------------------------------------------
   wire [31:0] InstrF_final = is_compressed_f ? instr_expanded : InstrF;
-
-  // ---------------------------------------------------------------------------
   // Registro del PC con soporte para Stall
-  // ---------------------------------------------------------------------------
   reg [31:0] PCF_r;
   assign PCF = PCF_r;
 
@@ -158,15 +82,7 @@ module datapath(
     if (reset)        PCF_r <= 32'b0;
     else if (~StallF) PCF_r <= PCNextF;  // Solo avanza si no hay stall
   end
-
-  // ---------------------------------------------------------------------------
   // [MODIFICADO] Sumador del PC con incremento variable
-  //
-  // En lugar de sumar siempre +4, el incremento depende del tamaño de la
-  // instrucción actual:
-  //   - Comprimida (16 bits): PC += 2
-  //   - Estándar   (32 bits): PC += 4
-  // ---------------------------------------------------------------------------
   wire [31:0] pc_increment = is_compressed_f ? 32'd2 : 32'd4;
 
   adder pcaddinc(
@@ -182,13 +98,7 @@ module datapath(
     .s  (PCSrcE),
     .y  (PCNextF)
   );
-
-  // ===========================================================================
   // REGISTRO INTERMEDIO  IF / ID
-  //
-  // Propaga la instrucción EXPANDIDA (no la cruda de imem) hacia la etapa ID.
-  // También propaga PCPlusInc (en lugar del antiguo PCPlus4).
-  // ===========================================================================
   reg [31:0] InstrD;
   reg [31:0] PCD;
   reg [31:0] PCPlusIncD;   // ← RENOMBRADO: antes PCPlus4D
@@ -211,10 +121,7 @@ module datapath(
   assign OpD       = InstrD[6:0];
   assign Funct3D   = InstrD[14:12];
   assign Funct7b5D = InstrD[30];
-
-  // ===========================================================================
   // ETAPA ID – Instruction Decode
-  // ===========================================================================
   wire [31:0] RD1D, RD2D, ImmExtD;
   wire [4:0] RdD = InstrD[11:7];
 
@@ -240,12 +147,7 @@ module datapath(
     .immsrc  (ImmSrc),
     .immext  (ImmExtD)
   );
-
-  // ===========================================================================
   // REGISTRO INTERMEDIO  ID / EX
-  // Propaga datos y señales de hazard hacia la etapa EX.
-  // También propaga ImmExtD para LUI (necesita llegar hasta WB).
-  // ===========================================================================
   reg [31:0] RD1E_r, RD2E_r, ImmExtE_r, PCE_r, PCPlusIncE_r;
   reg [4:0]  RdE_r;
   reg [4:0]  Rs1E_r;
@@ -288,16 +190,8 @@ module datapath(
   assign Rs1E = Rs1E_r;
   assign Rs2E = Rs2E_r;
   assign RdE  = RdE_r;
-
-  // ===========================================================================
   // ETAPA EX – Execute
-  // ===========================================================================
-
-  // -------------------------------------------------------------------------
   // Mux SrcAE: entrada A del sumador de branch/jump target
-  //   JalrE=0 → PCE   (jal, branches: target = PC + ImmExt)
-  //   JalrE=1 → RD1E  (jalr: target = Rs1 + ImmExt)
-  // -------------------------------------------------------------------------
   wire [31:0] SrcAE_branch;
   mux2 #(WIDTH) srcamux_branch(
     .d0 (PCE),
@@ -305,14 +199,7 @@ module datapath(
     .s  (JalrE),
     .y  (SrcAE_branch)
   );
-
-  // -------------------------------------------------------------------------
   // Mux de Forwarding para la entrada B de la ALU (Rs2) – ForwardBE
-  //   2'b00 → RD2E      (sin forwarding, valor directo del register file)
-  //   2'b01 → ResultW   (adelanta desde la etapa WB)
-  //   2'b10 → ALUResultM(adelanta desde la etapa MEM)
-  // WriteDataE: es también el dato a guardar en memoria con 'sw' (con forwarding).
-  // -------------------------------------------------------------------------
   wire [31:0] WriteDataE;
   mux3 #(WIDTH) forwardbmux(
     .d0 (RD2E),
@@ -321,12 +208,7 @@ module datapath(
     .s  (ForwardBE),
     .y  (WriteDataE)
   );
-
-  // -------------------------------------------------------------------------
   // Mux SrcBE: entrada B de la ALU
-  //   ALUSrcE=0 → WriteDataE (dato del registro, con posible forwarding)
-  //   ALUSrcE=1 → ImmExt     (inmediato)
-  // -------------------------------------------------------------------------
   wire [31:0] SrcBE;
   mux2 #(WIDTH) srcbmux(
     .d0 (WriteDataE),
@@ -334,19 +216,9 @@ module datapath(
     .s  (ALUSrcE),
     .y  (SrcBE)
   );
-
-  // -------------------------------------------------------------------------
   // ALU principal
-  // ShiftArithE distingue srl (lógico) de sra (aritmético)
-  // -------------------------------------------------------------------------
   wire [31:0] ALUResultE;
-
-  // -------------------------------------------------------------------------
   // Mux de Forwarding para la entrada A de la ALU (Rs1) – ForwardAE
-  //   2'b00 → RD1E      (sin forwarding, valor directo del register file)
-  //   2'b01 → ResultW   (adelanta desde la etapa WB)
-  //   2'b10 → ALUResultM(adelanta desde la etapa MEM)
-  // -------------------------------------------------------------------------
   wire [31:0] SrcAE;
   mux3 #(WIDTH) forwardamux(
     .d0 (RD1E),
@@ -365,22 +237,13 @@ module datapath(
     .zero       (ZeroE),
     .neg        (NegE)
   );
-
-  // -------------------------------------------------------------------------
   // Sumador de PCTarget para branch/jump
-  //   jal:  PCTargetE = PCE  + ImmExtE
-  //   jalr: PCTargetE = RD1E + ImmExtE
-  // -------------------------------------------------------------------------
   adder pcaddbranch(
     .a (SrcAE_branch),
     .b (ImmExtE),
     .y (PCTargetE)
   );
-
-  // ===========================================================================
   // REGISTRO INTERMEDIO  EX / MEM
-  // LUI: ImmExtE se propaga hacia MEM y WB para que ResultSrc=11 lo elija.
-  // ===========================================================================
   reg [31:0] ALUResultM_r, WriteDataM_r, PCPlusIncM_r, ImmExtM_r;
   reg [4:0]  RdM_r;
 
@@ -404,15 +267,7 @@ module datapath(
   assign WriteDataM    = WriteDataM_r;
   assign MemWriteM_out = MemWriteM;
   assign RdM           = RdM_r;
-
-  // ===========================================================================
   // ETAPA MEM – Memory Access (interfaz externa)
-  // ===========================================================================
-
-  // ===========================================================================
-  // REGISTRO INTERMEDIO  MEM / WB
-  // ImmExtM también se propaga para LUI.
-  // ===========================================================================
   reg [31:0] ALUResultW_r, ReadDataW_r, PCPlusIncW_r, ImmExtW_r;
   reg [4:0]  RdW_r;
 
@@ -434,15 +289,7 @@ module datapath(
 
   assign RdW     = RdW_r;
   assign RdW_int = RdW_r;   // alias para conectar al register file
-
-  // ===========================================================================
   // ETAPA WB – Write Back
-  // Mux4 para elegir el dato a escribir en el register file:
-  //   ResultSrcW = 2'b00 → ALUResult  (R-type, I-type ALU)
-  //   ResultSrcW = 2'b01 → ReadData   (lw)
-  //   ResultSrcW = 2'b10 → PC + Inc   (jal, jalr → guarda dirección de retorno)
-  //   ResultSrcW = 2'b11 → ImmExt     (lui → escribe el inmediato U-type)
-  // ===========================================================================
   mux4 #(WIDTH) resultmux(
     .d0 (ALUResultW_r),
     .d1 (ReadDataW_r),

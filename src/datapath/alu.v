@@ -1,21 +1,4 @@
-// =============================================================================
-// alu.v  –  Unidad Aritmético-Lógica RISC-V 32-bit
-// Fase B: Se agregan todas las operaciones requeridas por el ISA completo.
-//
-// Tabla ALUControl → operación:
-//   000  ADD  (add, addi, lw, sw, jalr address)
-//   001  SUB  (sub, cmp para branches)
-//   010  AND  (and, andi)
-//   011  OR   (or, ori)
-//   100  XOR  (xor, xori)
-//   101  SLT  (slt, slti  — signed less-than)
-//   110  SLL  (sll, slli)
-//   111  SRL/SRA (srl/srli vs sra/srai, distinguido por el bit ShiftArith)
-//
-// Flags de salida:
-//   zero  → result == 0         (beq: toma si zero=1; bne: toma si zero=0)
-//   neg   → result[31]           (blt/bge: compara con 0 el resultado de SUB)
-// =============================================================================
+// alu.v - Unidad Aritmético-Lógica RISC-V 32-bit
 module alu(
     input  [31:0] a, b,
     input  [2:0]  alucontrol,
@@ -25,9 +8,7 @@ module alu(
     output        neg          // result[31] (bit de signo, para blt/bge)
 );
 
-  // -------------------------------------------------------------------------
-  // Infraestructura ADD/SUB compartida
-  // -------------------------------------------------------------------------
+  // ADD/SUB compartido
   wire [31:0] condinvb;   // b o ~b según si es resta
   wire [31:0] sum;        // resultado de la suma/resta
   wire        isAddSub;   // 1 si la operación es add o sub
@@ -42,9 +23,7 @@ module alu(
   // pero el signo del resultado difiere
   assign v = ~(alucontrol[0] ^ a[31] ^ b[31]) & (a[31] ^ sum[31]) & isAddSub;
 
-  // -------------------------------------------------------------------------
   // Selección del resultado
-  // -------------------------------------------------------------------------
   reg [31:0] result_reg;
   assign result = result_reg;
 
@@ -62,9 +41,7 @@ module alu(
     default: result_reg = 32'b0;  // ALUControl desconocido: resultado 0 (no X)
   endcase
 
-  // -------------------------------------------------------------------------
   // Flags de salida
-  // -------------------------------------------------------------------------
   assign zero = (result == 32'b0);   // beq/bne usan este flag
   assign neg  = result[31];          // blt/bge usan este flag (resultado de SUB)
 

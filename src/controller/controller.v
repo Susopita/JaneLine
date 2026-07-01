@@ -1,15 +1,4 @@
-// =============================================================================
-// controller.v  –  Unidad de Control Pipelined RISC-V 32-bit
-// Fase B: ISA completo.
-//   Cambios respecto a Fase A:
-//     - ImmSrc ampliado a 3 bits (U-type para LUI)
-//     - Nuevas señales de control: JalrE (jalr), ShiftArithE (sra/srai)
-//     - PCSrcE ahora resuelve beq, bne, blt, bge usando Funct3E y los flags
-//       Zero y Neg de la ALU
-//     - Funct3D se registra en el registro ID/EX para usarse en EX
-//     - ResultSrc de 2 bits soporta LUI (ResultSrc=11 → pasa ImmExt directo)
-// Sin Hazard Unit todavía.
-// =============================================================================
+// controller.v - Unidad de Control Pipelined RISC-V 32-bit
 module controller(
     input  clk, reset,
 
@@ -99,11 +88,7 @@ module controller(
   // ImmSrc es combinacional (etapa ID, no se registra para llegar al extensor)
   assign ImmSrc = ImmSrcD;
 
-  // ---------------------------------------------------------------------------
-  // Registro ID / EX
-  // Propaga todas las señales de control hacia la etapa EX.
-  // Incluye Funct3 para resolver el tipo de branch en EX.
-  // ---------------------------------------------------------------------------
+  // Registro ID/EX
   reg        ALUSrcE_r, MemWriteE_r, RegWriteE_r, JumpE_r, BranchE_r;
   reg        JalrE_r, ShiftArithE_r;  // NUEVO
   reg [1:0]  ResultSrcE_r;
@@ -147,18 +132,7 @@ module controller(
   assign ResultSrcE = ResultSrcE_r;
   assign ALUControlE = ALUControlE_r;
 
-  // ---------------------------------------------------------------------------
   // Resolución de branch en la etapa EX
-  //
-  // La ALU realiza Rs1E - Rs2E (SUB) para todas las instrucciones B-type.
-  // El funct3 determina la condición:
-  //   000 (beq) : toma si resultado == 0        → ZeroE
-  //   001 (bne) : toma si resultado != 0        → ~ZeroE
-  //   100 (blt) : toma si resultado  < 0 (signed) → NegE
-  //   101 (bge) : toma si resultado >= 0 (signed) → ~NegE
-  //
-  // Jump incondicional: jal siempre toma; jalr también (JumpE=1).
-  // ---------------------------------------------------------------------------
   wire BranchTakenE;
   assign BranchTakenE =
       BranchE & (

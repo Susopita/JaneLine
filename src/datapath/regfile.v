@@ -1,11 +1,4 @@
-// =============================================================================
 // regfile.v  –  Register File RISC-V 32x32
-// Pipeline note (Harris & Harris §7.3):
-//   Las escrituras ocurren en el FLANCO NEGATIVO del reloj para que el dato
-//   escrito en WB ya esté disponible cuando ID lee en el mismo ciclo de reloj.
-//   Esto evita el hazard read-after-write sin necesidad de forwarding adicional
-//   para el caso WB→ID dentro del mismo ciclo.
-// =============================================================================
 module regfile(input  clk,
                input  we3,
                input  [ 4:0] a1, a2, a3,

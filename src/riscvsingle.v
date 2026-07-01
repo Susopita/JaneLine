@@ -1,11 +1,4 @@
-// =============================================================================
 // riscvsingle.v  –  Top-level: Procesador RISC-V 32-bit Pipelined
-// Fase B: ISA completo.
-//   - ImmSrc [2:0] (3 bits, cubre U-type para LUI)
-//   - NegE  : flag de signo ALU → controller (para blt/bge)
-//   - JalrE : controller → datapath (selecciona Rs1 como base del salto jalr)
-//   - ShiftArithE : controller → datapath (sra vs srl)
-// =============================================================================
 module riscvsingle(
     input         clk, reset,
 
@@ -19,10 +12,7 @@ module riscvsingle(
     output [31:0] WriteData,
     input  [31:0] ReadData
 );
-
-  // ---------------------------------------------------------------------------
   // Wires internos: Controller ↔ Datapath
-  // ---------------------------------------------------------------------------
 
   // Etapa ID: campos de instrucción → controller
   wire [6:0] OpD;
@@ -63,16 +53,10 @@ module riscvsingle(
   wire [4:0] Rs1D_w, Rs2D_w;
   wire [4:0] Rs1E_w, Rs2E_w;
   wire [4:0] RdE_w, RdM_w, RdW_w;
-
-  // ---------------------------------------------------------------------------
   // Señales de la Hazard Unit → Controller y Datapath
-  // ---------------------------------------------------------------------------
   wire [1:0] ForwardAE_w, ForwardBE_w;
   wire       StallF_w, StallD_w, FlushD_w, FlushE_w;
-
-  // ---------------------------------------------------------------------------
   // Controller
-  // ---------------------------------------------------------------------------
   controller c(
     .clk         (clk),
     .reset       (reset),
@@ -100,10 +84,7 @@ module riscvsingle(
     .NegE        (NegE),
     .PCSrcE      (PCSrcE)
   );
-
-  // ---------------------------------------------------------------------------
   // Hazard Unit
-  // ---------------------------------------------------------------------------
   hazard_unit hu(
     .Rs1D        (Rs1D_w),
     .Rs2D        (Rs2D_w),
@@ -123,10 +104,7 @@ module riscvsingle(
     .FlushD      (FlushD_w),
     .FlushE      (FlushE_w)
   );
-
-  // ---------------------------------------------------------------------------
   // Datapath
-  // ---------------------------------------------------------------------------
   datapath dp(
     .clk           (clk),
     .reset         (reset),
